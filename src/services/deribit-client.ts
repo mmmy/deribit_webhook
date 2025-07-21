@@ -1,6 +1,7 @@
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
-import { ApiKeyConfig, AuthResponse } from '../types';
 import { ConfigLoader } from '../config';
+import type { DeribitOptionInstrument } from '../types';
+import { ApiKeyConfig, AuthResponse } from '../types';
 
 export class DeribitClient {
   private httpClient: AxiosInstance;
@@ -83,13 +84,19 @@ export class DeribitClient {
   /**
    * Get available instruments (options)
    */
-  async getInstruments(currency: string = 'BTC', kind: string = 'option'): Promise<any[]> {
+  /**
+   * 获取可交易工具列表
+   * @param currency 货币类型，如 'BTC', 'ETH'
+   * @param kind 工具类型，如 'option', 'future'
+   * @returns 工具列表
+   */
+  async getInstruments(currency: string = 'BTC', kind: string = 'option'): Promise<DeribitOptionInstrument[]> {
     try {
       const baseUrl = this.configLoader.getApiBaseUrl(true); // Use test environment
       const response = await this.httpClient.get(`${baseUrl}/public/get_instruments`, {
         params: { currency, kind, expired: false }
       });
-      
+
       return response.data.result || [];
     } catch (error) {
       console.error('Failed to get instruments:', error);

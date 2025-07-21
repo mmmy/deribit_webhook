@@ -94,3 +94,46 @@ export interface OptionTradingResult {
   executedPrice?: number;
   error?: string;
 }
+
+// 期权列表查询参数接口
+export interface OptionListParams {
+  underlying: string;                    // 期权标的 (如 'BTC', 'ETH')
+  direction: 'long' | 'short';          // 方向: long(看涨) 或 short(看跌)
+  expired?: boolean;                     // 是否包含已过期期权，默认false
+  minStrike?: number;                    // 最小行权价
+  maxStrike?: number;                    // 最大行权价
+  minExpiry?: Date;                      // 最小到期时间
+  maxExpiry?: Date;                      // 最大到期时间
+}
+
+// Deribit期权工具信息接口
+export interface DeribitOptionInstrument {
+  instrument_name: string;               // 期权合约名称 (如 'BTC-25JUL25-50000-C')
+  currency: string;                      // 标的货币 (如 'BTC')
+  kind: string;                          // 工具类型 ('option')
+  option_type: 'call' | 'put';          // 期权类型: call(看涨) 或 put(看跌)
+  strike: number;                        // 行权价格
+  expiration_timestamp: number;          // 到期时间戳 (毫秒)
+  tick_size: number;                     // 最小价格变动单位
+  min_trade_amount: number;              // 最小交易数量
+  contract_size: number;                 // 合约大小
+  is_active: boolean;                    // 是否活跃
+  settlement_period: string;             // 结算周期
+  creation_timestamp: number;            // 创建时间戳
+  base_currency: string;                 // 基础货币
+  quote_currency: string;                // 计价货币
+}
+
+// 期权列表查询结果接口
+export interface OptionListResult {
+  success: boolean;
+  message: string;
+  data?: {
+    instruments: DeribitOptionInstrument[];
+    total: number;
+    filtered: number;
+    underlying: string;
+    direction: 'long' | 'short';
+  };
+  error?: string;
+}

@@ -1,9 +1,9 @@
-import express from 'express';
 import cors from 'cors';
+import dotenv from 'dotenv';
+import express from 'express';
 import helmet from 'helmet';
 import morgan from 'morgan';
-import dotenv from 'dotenv';
-import { DeribitAuth, DeribitClient, MockDeribitClient, ConfigLoader, OptionTradingService, WebhookSignalPayload, WebhookResponse } from './services';
+import { ConfigLoader, DeribitAuth, DeribitClient, MockDeribitClient, OptionTradingService, WebhookResponse, WebhookSignalPayload } from './services';
 
 // Load environment variables
 dotenv.config();
@@ -264,6 +264,84 @@ app.get('/api/trading/status', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to get trading status',
+      error: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Get option by delta endpoint
+app.get('/api/options/:currency/delta/:delta', async (req, res) => {
+  try {
+    const { currency, delta } = req.params;
+    const { minExpiredDays = '7', longSide = 'true' } = req.query;
+
+    // 验证参数
+    const deltaValue = parseFloat(delta);
+    const minExpiredDaysValue = parseInt(minExpiredDays as string);
+    const longSideValue = (longSide as string).toLowerCase() === 'true';
+
+    if (isNaN(deltaValue) || deltaValue < -1 || deltaValue > 1) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid delta value. Must be between -1 and 1',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    if (isNaN(minExpiredDaysValue) || minExpiredDaysValue < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid minExpiredDays value. Must be a positive number',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    console.log(`🎯 Finding option by delta: ${currency}, delta: ${deltaValue}, minExpiredDays: ${minExpiredDaysValue}, longSide: ${longSideValue}`);
+
+    // 调用期权筛选服务
+    let result;
+    if (useMockMode) {
+      result = await mockClient.getInstrumentByDelta(currency.toUpperCase(), minExpiredDaysValue, deltaValue, longSideValue);
+    } else {
+      result = await deribitClient.getInstrumentByDelta(currency.toUpperCase(), minExpiredDaysValue, deltaValue, longSideValue);
+    }
+
+    if (result) {
+      res.json({
+        success: true,
+        message: `Found optimal option for delta ${deltaValue}`,
+        data: {
+          instrument: result,
+          searchParams: {
+            currency: currency.toUpperCase(),
+            targetDelta: deltaValue,
+            minExpiredDays: minExpiredDaysValue,
+            longSide: longSideValue,
+            optionType: longSideValue ? 'call' : 'put'
+          }
+        },
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.status(404).json({
+        success: false,
+        message: `No suitable option found for delta ${deltaValue}`,
+        searchParams: {
+          currency: currency.toUpperCase(),
+          targetDelta: deltaValue,
+          minExpiredDays: minExpiredDaysValue,
+          longSide: longSideValue
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+  } catch (error) {
+    console.error('Error in delta filter endpoint:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to find option by delta',
       error: error instanceof Error ? error.message : 'Unknown error',
       timestamp: new Date().toISOString()
     });

@@ -137,3 +137,46 @@ export interface OptionListResult {
   };
   error?: string;
 }
+
+// 希腊字母接口
+export interface OptionGreeks {
+  delta: number;                         // Delta值
+  gamma: number;                         // Gamma值
+  theta: number;                         // Theta值
+  vega: number;                          // Vega值
+  rho?: number;                          // Rho值 (可选)
+}
+
+// 期权详细信息接口 (包含希腊字母和价格信息)
+export interface OptionDetails {
+  instrument_name: string;               // 期权合约名称
+  underlying_index: string;              // 标的指数
+  underlying_price: number;              // 标的价格
+  timestamp: number;                     // 时间戳
+  state: string;                         // 状态
+  settlement_price: number;              // 结算价格
+  open_interest: number;                 // 持仓量
+  min_price: number;                     // 最小价格
+  max_price: number;                     // 最大价格
+  mark_price: number;                    // 标记价格
+  mark_iv: number;                       // 标记隐含波动率
+  last_price: number;                    // 最新价格
+  interest_rate: number;                 // 利率
+  instrument_type: string;               // 工具类型
+  index_price: number;                   // 指数价格
+  greeks: OptionGreeks;                  // 希腊字母
+  bid_iv: number;                        // 买入隐含波动率
+  best_bid_price: number;                // 最佳买入价
+  best_bid_amount: number;               // 最佳买入数量
+  best_ask_price: number;                // 最佳卖出价
+  best_ask_amount: number;               // 最佳卖出数量
+  ask_iv: number;                        // 卖出隐含波动率
+}
+
+// Delta筛选结果接口
+export interface DeltaFilterResult {
+  instrument: DeribitOptionInstrument;   // 期权工具信息
+  details: OptionDetails;                // 期权详细信息
+  deltaDistance: number;                 // Delta距离目标值的差距
+  spreadRatio: number;                   // 价差比率
+}

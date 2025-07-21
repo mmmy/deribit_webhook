@@ -7,7 +7,8 @@ export class MockDeribitClient {
    */
   async authenticate(account: ApiKeyConfig): Promise<AuthResponse> {
     console.log(`[MOCK] Authenticating account: ${account.name}`);
-    console.log(`[MOCK] Using ${account.testMode ? 'test' : 'production'} environment`);
+    const useTestEnvironment = process.env.USE_TEST_ENVIRONMENT === 'true';
+    console.log(`[MOCK] Using ${useTestEnvironment ? 'test' : 'production'} environment`);
     
     // Simulate API delay
     await new Promise(resolve => setTimeout(resolve, 500));

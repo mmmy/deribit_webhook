@@ -4,7 +4,6 @@ export interface ApiKeyConfig {
   clientId: string;
   clientSecret: string;
   enabled: boolean;
-  testMode: boolean;
   grantType: 'client_credentials' | 'client_signature' | 'refresh_token';
   scope?: string;
 }

@@ -9,7 +9,6 @@ accounts:
     clientId: "your_client_id_here"          # Public identifier (from API settings)
     clientSecret: "your_client_secret_here"  # Private secret key (keep confidential)
     enabled: true
-    testMode: true  # Use test environment for this account
     
     # Optional authentication settings
     grantType: "client_credentials"  # client_credentials, client_signature, or refresh_token
@@ -21,7 +20,6 @@ accounts:
     clientId: "your_second_client_id_here"
     clientSecret: "your_second_client_secret_here"
     enabled: false
-    testMode: true
     grantType: "client_credentials"
     scope: ""
     
@@ -31,7 +29,6 @@ accounts:
   #   clientId: "prod_client_id_here"
   #   clientSecret: "prod_client_secret_here"
   #   enabled: false
-  #   testMode: false  # Set to false for live trading
   #   grantType: "client_credentials"
   #   scope: ""
 

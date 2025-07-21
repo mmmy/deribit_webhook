@@ -21,9 +21,9 @@ export class DeribitClient {
   /**
    * Test basic connectivity to Deribit API
    */
-  async testConnectivity(testMode: boolean = true): Promise<boolean> {
+  async testConnectivity(): Promise<boolean> {
     try {
-      const baseUrl = this.configLoader.getApiBaseUrl(testMode);
+      const baseUrl = this.configLoader.getApiBaseUrl();
       console.log(`Testing connectivity to: ${baseUrl}`);
       
       const response = await this.httpClient.get(`${baseUrl}/public/get_time`, {
@@ -43,7 +43,7 @@ export class DeribitClient {
    */
   async authenticate(account: ApiKeyConfig): Promise<AuthResponse | null> {
     try {
-      const baseUrl = this.configLoader.getApiBaseUrl(account.testMode);
+      const baseUrl = this.configLoader.getApiBaseUrl();
       console.log(`Authenticating with: ${baseUrl}/public/auth`);
       
       const params = {
@@ -92,7 +92,7 @@ export class DeribitClient {
    */
   async getInstruments(currency: string = 'BTC', kind: string = 'option'): Promise<DeribitOptionInstrument[]> {
     try {
-      const baseUrl = this.configLoader.getApiBaseUrl(false); // Use test environment
+      const baseUrl = this.configLoader.getApiBaseUrl();
       const response = await this.httpClient.get(`${baseUrl}/public/get_instruments`, {
         params: { currency, kind, expired: false }
       });
@@ -111,7 +111,7 @@ export class DeribitClient {
    */
   async getOptionDetails(instrumentName: string): Promise<OptionDetails | null> {
     try {
-      const baseUrl = this.configLoader.getApiBaseUrl(true); // Use test environment
+      const baseUrl = this.configLoader.getApiBaseUrl();
       const response = await this.httpClient.get(`${baseUrl}/public/ticker`, {
         params: { instrument_name: instrumentName }
       });

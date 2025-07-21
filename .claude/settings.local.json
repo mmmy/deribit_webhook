@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(mkdir:*)",
+      "WebFetch(domain:docs.deribit.com)",
+      "Bash(npm run dev:*)",
+      "Bash(npx ts-node:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm start)",
+      "Bash(timeout:*)",
+      "Bash(node:*)",
+      "Bash(ping:*)",
+      "Bash(pkill:*)",
+      "Bash(rm:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": []
+  }
+}

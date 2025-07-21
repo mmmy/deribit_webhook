@@ -1,0 +1,47 @@
+# Deribit API Keys Configuration
+# Copy this file to apikeys.yml and fill in your actual API credentials
+
+accounts:
+  # Primary trading account
+  - name: account_1
+    description: "Primary trading account"
+    # From Deribit API settings page - these are your OAuth 2.0 credentials
+    clientId: "your_client_id_here"          # Public identifier (from API settings)
+    clientSecret: "your_client_secret_here"  # Private secret key (keep confidential)
+    enabled: true
+    testMode: true  # Use test environment for this account
+    
+    # Optional authentication settings
+    grantType: "client_credentials"  # client_credentials, client_signature, or refresh_token
+    scope: ""                        # Optional: specify access scopes if needed
+    
+  # Secondary trading account (disabled by default)
+  - name: account_2
+    description: "Secondary trading account"
+    clientId: "your_second_client_id_here"
+    clientSecret: "your_second_client_secret_here"
+    enabled: false
+    testMode: true
+    grantType: "client_credentials"
+    scope: ""
+    
+  # Production account example (commented out for safety)
+  # - name: production_account
+  #   description: "Production trading account"
+  #   clientId: "prod_client_id_here"
+  #   clientSecret: "prod_client_secret_here"
+  #   enabled: false
+  #   testMode: false  # Set to false for live trading
+  #   grantType: "client_credentials"
+  #   scope: ""
+
+# Global settings
+settings:
+  # Default connection timeout in seconds
+  connectionTimeout: 30
+  
+  # Reconnect attempts for WebSocket
+  maxReconnectAttempts: 5
+  
+  # Rate limiting (requests per minute)
+  rateLimitPerMinute: 60

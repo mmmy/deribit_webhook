@@ -1,4 +1,4 @@
-import type { DeribitOptionInstrument, OptionDetails } from '../types';
+import type { DeribitOptionInstrument, OptionDetails, DeltaFilterResult } from '../types';
 import { ApiKeyConfig, AuthResponse } from '../types';
 
 export class MockDeribitClient {
@@ -234,7 +234,7 @@ export class MockDeribitClient {
   /**
    * Mock根据Delta值筛选最优期权 (重构版本)
    */
-  async getInstrumentByDelta(currency: string, minExpiredDays: number, delta: number, longSide: boolean): Promise<DeribitOptionInstrument | null> {
+  async getInstrumentByDelta(currency: string, minExpiredDays: number, delta: number, longSide: boolean): Promise<DeltaFilterResult | null> {
     console.log(`[MOCK] Finding option by delta: ${currency}, minExpiredDays: ${minExpiredDays}, delta: ${delta}, longSide: ${longSide}`);
 
     await new Promise(resolve => setTimeout(resolve, 500));
@@ -337,7 +337,7 @@ export class MockDeribitClient {
       console.log(`[MOCK] Delta: ${bestOption.details.greeks.delta.toFixed(3)} (target: ${delta})`);
       console.log(`[MOCK] Spread ratio: ${(bestOption.spreadRatio * 100).toFixed(2)}%`);
 
-      return bestOption.instrument;
+      return bestOption;
 
     } catch (error) {
       console.error('[MOCK] Error in getInstrumentByDelta:', error);

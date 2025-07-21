@@ -51,15 +51,17 @@ export class ConfigLoader {
     return config.accounts.find(account => account.name === name);
   }
 
-  public getApiBaseUrl(testMode: boolean): string {
-    if (testMode) {
+  public getApiBaseUrl(): string {
+    const useTestEnvironment = process.env.USE_TEST_ENVIRONMENT === 'true';
+    if (useTestEnvironment) {
       return process.env.DERIBIT_TEST_API_URL || 'https://test.deribit.com/api/v2';
     }
     return process.env.DERIBIT_API_URL || 'https://www.deribit.com/api/v2';
   }
 
-  public getWebSocketUrl(testMode: boolean = true): string {
-    if (testMode) {
+  public getWebSocketUrl(): string {
+    const useTestEnvironment = process.env.USE_TEST_ENVIRONMENT === 'true';
+    if (useTestEnvironment) {
       return process.env.DERIBIT_TEST_WS_URL || 'wss://test.deribit.com/ws/api/v2';
     }
     return process.env.DERIBIT_WS_URL || 'wss://www.deribit.com/ws/api/v2';

@@ -138,7 +138,7 @@ export class OptionService {
    */
   public async getOptionDetails(instrumentName: string): Promise<any> {
     try {
-      const baseUrl = this.configLoader.getApiBaseUrl(true); // 使用测试环境
+      const baseUrl = this.configLoader.getApiBaseUrl();
       
       if (this.useMockMode) {
         // 返回模拟数据

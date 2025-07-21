@@ -47,7 +47,7 @@ export class DeribitAuth {
    * Request a new access token from Deribit
    */
   private async requestNewToken(account: ApiKeyConfig): Promise<AuthToken> {
-    const baseUrl = this.configLoader.getApiBaseUrl(account.testMode);
+    const baseUrl = this.configLoader.getApiBaseUrl();
     const url = `${baseUrl}/public/auth`;
 
     const params: any = {
@@ -106,7 +106,7 @@ export class DeribitAuth {
       throw new Error('No refresh token available');
     }
 
-    const baseUrl = this.configLoader.getApiBaseUrl(account.testMode);
+    const baseUrl = this.configLoader.getApiBaseUrl();
     const url = `${baseUrl}/public/auth`;
 
     const params = {
@@ -196,7 +196,7 @@ export class DeribitAuth {
 
       // Test first enabled account
       const account = accounts[0]!;
-      const baseUrl = this.configLoader.getApiBaseUrl(account.testMode);
+      const baseUrl = this.configLoader.getApiBaseUrl();
       
       // Test public endpoint first
       await this.httpClient.get(`${baseUrl}/public/test`);

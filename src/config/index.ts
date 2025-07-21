@@ -1,7 +1,7 @@
+import dotenv from 'dotenv';
 import { readFileSync } from 'fs';
 import { load } from 'js-yaml';
 import path from 'path';
-import dotenv from 'dotenv';
 import { DeribitConfig } from '../types';
 
 // Load environment variables
@@ -51,7 +51,7 @@ export class ConfigLoader {
     return config.accounts.find(account => account.name === name);
   }
 
-  public getApiBaseUrl(testMode: boolean = true): string {
+  public getApiBaseUrl(testMode: boolean): string {
     if (testMode) {
       return process.env.DERIBIT_TEST_API_URL || 'https://test.deribit.com/api/v2';
     }

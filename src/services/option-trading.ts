@@ -1,14 +1,20 @@
 import { ConfigLoader } from '../config';
 import { OptionTradingParams, OptionTradingResult, WebhookSignalPayload } from '../types';
 import { DeribitAuth } from './auth';
+import { DeribitClient } from './deribit-client';
+import { MockDeribitClient } from './mock-deribit';
 
 export class OptionTradingService {
   private deribitAuth: DeribitAuth;
   private configLoader: ConfigLoader;
+  private deribitClient: DeribitClient;
+  private mockClient: MockDeribitClient;
 
   constructor() {
     this.deribitAuth = new DeribitAuth();
     this.configLoader = ConfigLoader.getInstance();
+    this.deribitClient = new DeribitClient();
+    this.mockClient = new MockDeribitClient();
   }
 
   /**
@@ -42,7 +48,7 @@ export class OptionTradingService {
       console.log('📊 Parsed trading parameters:', tradingParams);
 
       // 4. 执行期权交易 (当前为占位符函数)
-      const result = await this.executeOptionTrade(tradingParams);
+      const result = await this.executeOptionTrade(tradingParams, payload);
       
       return result;
 
@@ -88,32 +94,89 @@ export class OptionTradingService {
       symbol: payload.symbol,
       quantity,
       price,
-      orderType: price ? 'limit' : 'market'
+      orderType: price ? 'limit' : 'market',
+      qtyType: payload.qtyType || 'contracts'
     };
   }
 
   /**
-   * 执行期权交易 (占位符函数)
-   * TODO: 实现真实的期权交易逻辑
+   * 执行期权交易 (使用delta1和n字段选择期权)
    */
-  private async executeOptionTrade(params: OptionTradingParams): Promise<OptionTradingResult> {
-    console.log('🚀 Executing option trade (PLACEHOLDER):', params);
+  private async executeOptionTrade(params: OptionTradingParams, payload: WebhookSignalPayload): Promise<OptionTradingResult> {
+    console.log('🚀 Executing option trade:', params);
     
-    // 模拟交易延迟
-    await new Promise(resolve => setTimeout(resolve, 500));
+    const useMockMode = process.env.USE_MOCK_MODE === 'true';
+    
+    try {
+      let instrumentName: string | undefined;
+      
+      // 如果是开仓操作且提供了delta1和n参数，使用getInstrumentByDelta选择期权
+      if (params.action === 'open' && payload.delta1 !== undefined && payload.n !== undefined) {
+        console.log(`🎯 Using delta-based option selection: delta=${payload.delta1}, minExpiredDays=${payload.n}`);
+        
+        // 提取货币类型
+        const currency = params.symbol.replace(/USDT?/i, '').toUpperCase();
+        
+        // 确定longSide (true=call, false=put)
+        // 简化逻辑: buy方向选择call期权，sell方向选择put期权
+        const longSide = params.direction === 'buy';
+        
+        // 调用getInstrumentByDelta
+        let deltaResult;
+        if (useMockMode) {
+          deltaResult = await this.mockClient.getInstrumentByDelta(currency, payload.n, payload.delta1, longSide);
+        } else {
+          deltaResult = await this.deribitClient.getInstrumentByDelta(currency, payload.n, payload.delta1, longSide);
+        }
+        
+        if (deltaResult) {
+          instrumentName = deltaResult.instrument.instrument_name;
+          console.log(`✅ Selected option instrument: ${instrumentName}`);
+          
+          // 执行开仓交易
+          const orderResult = await this.placeOptionOrder(instrumentName, params, useMockMode);
+          if (!orderResult.success) {
+            return orderResult;
+          }
+        } else {
+          console.warn(`⚠️ No suitable option found for delta=${payload.delta1}, using fallback`);
+          instrumentName = this.generateMockInstrumentName(params.symbol, params.direction);
+          
+          // 使用fallback合约执行开仓交易
+          const orderResult = await this.placeOptionOrder(instrumentName, params, useMockMode);
+          if (!orderResult.success) {
+            return orderResult;
+          }
+        }
+      } else {
+        // 平仓操作或未提供delta参数时，使用原有逻辑
+        instrumentName = this.generateMockInstrumentName(params.symbol, params.direction);
+        
+        // 执行平仓或无delta参数的交易
+        const orderResult = await this.placeOptionOrder(instrumentName, params, useMockMode);
+        if (!orderResult.success) {
+          return orderResult;
+        }
+      }
 
-    // 生成模拟的期权合约名称
-    const instrumentName = this.generateMockInstrumentName(params.symbol, params.direction);
-
-    // 返回模拟交易结果
-    return {
-      success: true,
-      orderId: `mock_order_${Date.now()}`,
-      message: `Successfully executed ${params.action} ${params.direction} order for ${params.quantity} contracts`,
-      instrumentName,
-      executedQuantity: params.quantity,
-      executedPrice: params.price || 0.05 // 模拟执行价格
-    };
+      // 返回交易结果
+      return {
+        success: true,
+        orderId: `${useMockMode ? 'mock' : 'real'}_order_${Date.now()}`,
+        message: `Successfully executed ${params.action} ${params.direction} order for ${params.quantity} contracts`,
+        instrumentName,
+        executedQuantity: params.quantity,
+        executedPrice: params.price || 0.05 // 模拟执行价格
+      };
+      
+    } catch (error) {
+      console.error('❌ Error executing option trade:', error);
+      return {
+        success: false,
+        message: 'Failed to execute option trade',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
   }
 
   /**
@@ -157,6 +220,102 @@ export class OptionTradingService {
     };
     
     return strikes[currency as keyof typeof strikes] || 1000;
+  }
+
+  /**
+   * 下单执行期权交易
+   */
+  private async placeOptionOrder(instrumentName: string, params: OptionTradingParams, useMockMode: boolean): Promise<OptionTradingResult> {
+    console.log(`📋 Placing order for instrument: ${instrumentName}`);
+    
+    try {
+      if (useMockMode) {
+        // Mock模式：模拟下单
+        console.log(`[MOCK] Placing ${params.direction} order for ${params.quantity} contracts of ${instrumentName}`);
+        
+        // 模拟网络延迟
+        await new Promise(resolve => setTimeout(resolve, 200));
+        
+        return {
+          success: true,
+          orderId: `mock_order_${Date.now()}`,
+          message: `Successfully placed ${params.action} ${params.direction} order`,
+          instrumentName,
+          executedQuantity: params.quantity,
+          executedPrice: params.price || 0.05
+        };
+      } else {
+        // 真实模式：调用Deribit API下单
+        console.log(`[REAL] Placing ${params.direction} order for ${params.quantity} contracts of ${instrumentName}`);
+        
+        // 1. 获取账户信息和认证
+        const account = this.configLoader.getAccountByName(params.accountName);
+        if (!account) {
+          throw new Error(`Account not found: ${params.accountName}`);
+        }
+        
+        await this.deribitAuth.authenticate(params.accountName);
+        const tokenInfo = this.deribitAuth.getTokenInfo(params.accountName);
+        if (!tokenInfo) {
+          throw new Error(`Authentication failed for account: ${params.accountName}`);
+        }
+        
+        // 2. 获取期权详情以计算价格和数量
+        const optionDetails = await this.deribitClient.getOptionDetails(instrumentName);
+        if (!optionDetails) {
+          throw new Error(`Failed to get option details for ${instrumentName}`);
+        }
+        
+        // 3. 计算入场价格 (买一 + 卖一) / 2
+        const entryPrice = (optionDetails.best_bid_price + optionDetails.best_ask_price) / 2;
+        console.log(`📊 Entry price calculated: ${entryPrice} (bid: ${optionDetails.best_bid_price}, ask: ${optionDetails.best_ask_price})`);
+        
+        // 4. 计算下单数量
+        let orderQuantity = params.quantity;
+        
+        // 如果qtyType是cash，将美元金额转换为合约数量
+        if (params.qtyType === 'cash') {
+          // 开仓大小 = (size / 期权价格) * 合约乘数
+          // Deribit期权合约乘数通常是1
+          orderQuantity = Math.floor(params.quantity / entryPrice);
+          console.log(`💰 Cash mode: converting $${params.quantity} to ${orderQuantity} contracts at price ${entryPrice}`);
+        }
+        
+        if (orderQuantity <= 0) {
+          throw new Error(`Invalid order quantity: ${orderQuantity}`);
+        }
+        
+        // 5. 调用Deribit下单API
+        console.log(`📋 Placing order: ${params.direction} ${orderQuantity} contracts of ${instrumentName} at price ${entryPrice}`);
+        
+        const orderResult = await this.deribitClient.placeOrder(
+          instrumentName,
+          params.direction,
+          orderQuantity,
+          params.orderType || 'market',
+          params.orderType === 'limit' ? entryPrice : undefined,
+          tokenInfo.accessToken
+        );
+        
+        console.log(`✅ Order placed successfully:`, orderResult);
+        
+        return {
+          success: true,
+          orderId: orderResult.order?.order_id || `deribit_${Date.now()}`,
+          message: `Successfully placed ${params.direction} order for ${orderQuantity} contracts`,
+          instrumentName,
+          executedQuantity: orderResult.order?.filled_amount || orderQuantity,
+          executedPrice: orderResult.order?.average_price || entryPrice
+        };
+      }
+    } catch (error) {
+      console.error(`❌ Failed to place order for ${instrumentName}:`, error);
+      return {
+        success: false,
+        message: 'Failed to place option order',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
   }
 
   /**

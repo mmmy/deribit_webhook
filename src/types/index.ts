@@ -59,6 +59,8 @@ export interface WebhookSignalPayload {
   alertMessage?: string;                 // 警报消息
   comment?: string;                      // 注释
   qtyType: 'fixed' | 'percent' | 'contracts'; // 数量类型
+  delta1?: number;                       // 期权Delta值，用于开仓时选择期权
+  n?: number;                           // 最小到期天数，用于开仓时选择期权
 }
 
 // Webhook响应接口
@@ -81,6 +83,7 @@ export interface OptionTradingParams {
   price?: number;                        // 限价 (可选)
   orderType: 'market' | 'limit';         // 订单类型
   instrumentName?: string;               // Deribit期权合约名称
+  qtyType?: 'fixed' | 'percent' | 'cash' | 'contracts'; // 数量类型
 }
 
 // 期权交易结果接口

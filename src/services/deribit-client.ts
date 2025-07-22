@@ -316,4 +316,44 @@ export class DeribitClient {
       return null;
     }
   }
+
+  /**
+   * 下期权订单
+   */
+  async placeOrder(
+    instrumentName: string,
+    direction: 'buy' | 'sell',
+    amount: number,
+    orderType: 'market' | 'limit' = 'market',
+    price?: number,
+    accessToken?: string
+  ): Promise<any> {
+    try {
+      const baseUrl = this.configLoader.getApiBaseUrl();
+      const endpoint = direction === 'buy' ? '/private/buy' : '/private/sell';
+      
+      const orderParams = {
+        instrument_name: instrumentName,
+        amount: amount,
+        type: orderType,
+        ...(orderType === 'limit' && price && { price })
+      };
+
+      const response = await this.httpClient.post(`${baseUrl}${endpoint}`, orderParams, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (response.data.error) {
+        throw new Error(`Deribit API error: ${response.data.error.message}`);
+      }
+
+      return response.data.result;
+    } catch (error) {
+      console.error('Error placing order:', error);
+      throw error;
+    }
+  }
 }

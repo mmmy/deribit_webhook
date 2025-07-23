@@ -19,12 +19,25 @@ export interface DeribitConfig {
   settings: GlobalSettings;
 }
 
-export interface AuthResponse {
+// Deribit认证响应数据
+export interface DeribitAuthResult {
   access_token: string;
   expires_in: number;
   refresh_token: string;
   scope: string;
   token_type: string;
+  enabled_features: string[];
+  sid?: string;
+}
+
+// Deribit API标准响应格式
+export interface AuthResponse {
+  jsonrpc: string;
+  result: DeribitAuthResult;
+  testnet: boolean;
+  usIn: number;
+  usOut: number;
+  usDiff: number;
 }
 
 export interface DeribitError {
@@ -181,4 +194,90 @@ export interface DeltaFilterResult {
   details: OptionDetails;                // 期权详细信息
   deltaDistance: number;                 // Delta距离目标值的差距
   spreadRatio: number;                   // 价差比率
+}
+
+// Deribit认证授权类型
+export type DeribitGrantType =
+  | 'client_credentials'                 // 客户端凭证授权
+  | 'client_signature'                   // 客户端签名授权
+  | 'refresh_token';                     // 刷新令牌授权
+
+// Deribit访问范围
+export type DeribitScope =
+  | 'mainaccount'                        // 主账户访问
+  | 'connection'                         // 连接级访问
+  | `session:${string}`                  // 会话级访问 (session:name)
+  | 'account:read'                       // 账户只读访问
+  | 'account:read_write'                 // 账户读写访问
+  | 'trade:read'                         // 交易只读访问
+  | 'trade:read_write'                   // 交易读写访问
+  | 'wallet:read'                        // 钱包只读访问
+  | 'wallet:read_write'                  // 钱包读写访问
+  | 'wallet:none'                        // 禁止钱包访问
+  | 'account:none'                       // 禁止账户访问
+  | 'trade:none'                         // 禁止交易访问
+  | `expires:${number}`                  // 过期时间 (expires:NUMBER)
+  | `ip:${string}`                       // IP限制 (ip:ADDR)
+  | 'block_trade:read'                   // 大宗交易只读
+  | 'block_trade:read_write'             // 大宗交易读写
+  | 'block_rfq:read'                     // 大宗RFQ只读
+  | 'block_rfq:read_write';              // 大宗RFQ读写
+
+// 基础认证参数接口
+export interface DeribitBaseAuthParams {
+  grant_type: DeribitGrantType;          // 授权类型
+  scope?: string;                        // 访问范围 (多个scope用空格分隔)
+}
+
+// 客户端凭证认证参数
+export interface DeribitClientCredentialsParams extends DeribitBaseAuthParams {
+  grant_type: 'client_credentials';
+  client_id: string;                     // 客户端ID
+  client_secret: string;                 // 客户端密钥
+}
+
+// 客户端签名认证参数
+export interface DeribitClientSignatureParams extends DeribitBaseAuthParams {
+  grant_type: 'client_signature';
+  client_id: string;                     // 客户端ID
+  timestamp: number;                     // 时间戳 (毫秒)
+  signature: string;                     // HMAC-SHA256签名
+  nonce: string;                         // 随机字符串
+  data?: string;                         // 可选的用户数据
+}
+
+// 刷新令牌认证参数
+export interface DeribitRefreshTokenParams extends DeribitBaseAuthParams {
+  grant_type: 'refresh_token';
+  refresh_token: string;                 // 刷新令牌
+}
+
+// 联合认证参数类型
+export type DeribitAuthParams =
+  | DeribitClientCredentialsParams
+  | DeribitClientSignatureParams
+  | DeribitRefreshTokenParams;
+
+// 认证请求的完整参数接口
+export interface DeribitAuthRequestParams {
+  // 基础参数
+  grant_type: DeribitGrantType;
+  scope?: string;
+
+  // 客户端凭证参数
+  client_id: string;
+  client_secret: string;
+
+  // 客户端签名参数
+  timestamp?: number;
+  signature?: string;
+  nonce?: string;
+  data?: string;
+
+  // 刷新令牌参数
+  refresh_token?: string;
+
+  // 安全密钥授权参数 (可选)
+  authorization_data?: string;           // TFA代码或其他授权数据
+  challenge?: string;                    // 服务器挑战字符串
 }

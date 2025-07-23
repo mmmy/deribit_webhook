@@ -67,9 +67,9 @@ export class DeribitClient {
       );
 
       console.log("Authentication successful:", {
-        token_type: response.data.token_type,
-        expires_in: response.data.expires_in,
-        scope: response.data.scope,
+        token_type: response.data.result.token_type,
+        expires_in: response.data.result.expires_in,
+        scope: response.data.result.scope,
       });
 
       return response.data;
@@ -333,10 +333,11 @@ export class DeribitClient {
       const endpoint = direction === 'buy' ? '/private/buy' : '/private/sell';
       
       const orderParams = {
+        otoco_config: [],
         instrument_name: instrumentName,
         amount: amount,
         type: orderType,
-        ...(orderType === 'limit' && price && { price })
+        ...(orderType === 'limit' && price && { price }) 
       };
 
       const response = await this.httpClient.post(`${baseUrl}${endpoint}`, orderParams, {

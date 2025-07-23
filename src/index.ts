@@ -66,8 +66,8 @@ app.get('/api/auth/test', async (req, res) => {
         message: 'Authentication successful (MOCK MODE)',
         account: accountName,
         mockMode: true,
-        tokenType: authResult.token_type,
-        expiresIn: authResult.expires_in
+        tokenType: authResult.result.token_type,
+        expiresIn: authResult.result.expires_in
       });
     } else {
       // Use real client
@@ -135,6 +135,8 @@ app.get('/api/instruments', async (req, res) => {
 });
 
 // Get account summary endpoint
+// todo: path: /api/account/:accountName/:currency
+// return: 仓位列表
 app.get('/api/account/:currency', async (req, res) => {
   try {
     const currency = req.params.currency.toUpperCase();

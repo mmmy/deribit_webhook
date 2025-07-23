@@ -1,0 +1,19 @@
+{
+  "accountName": "account_1",
+  "side": "buy",
+  "exchange": "DERIBIT",
+  "period": "5",
+  "marketPosition": "long",
+  "prevMarketPosition": "flat",
+  "symbol": "BTCUSDT",
+  "price": "95000",
+  "timestamp": "2025-01-22T10:00:00Z",
+  "size": "5000",
+  "positionSize": "5000",
+  "id": "test_btc_long_001",
+  "alertMessage": "开多BTC期权测试",
+  "comment": "测试真实开仓：$5000 BTC期权，n=2，delta=0.7",
+  "qtyType": "cash",
+  "delta1": 0.7,
+  "n": 2
+}

@@ -1,6 +1,6 @@
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
-import { ApiKeyConfig, AuthResponse, AuthToken, DeribitError } from '../types';
 import { ConfigLoader } from '../config';
+import { ApiKeyConfig, AuthResponse, AuthToken, DeribitAuthRequestParams, DeribitError } from '../types';
 
 export class DeribitAuth {
   private httpClient: AxiosInstance;
@@ -44,13 +44,25 @@ export class DeribitAuth {
   }
 
   /**
+   * Make HTTP request to Deribit auth endpoint
+   * @param url The authentication URL
+   * @param params The request parameters containing authentication data
+   * @returns The HTTP response containing auth data
+   */
+  private async makeAuthRequest(url: string, params: DeribitAuthRequestParams): Promise<AxiosResponse<AuthResponse>> {
+    return await this.httpClient.get(url, {
+      params,
+    });
+  }
+
+  /**
    * Request a new access token from Deribit
    */
   private async requestNewToken(account: ApiKeyConfig): Promise<AuthToken> {
     const baseUrl = this.configLoader.getApiBaseUrl();
     const url = `${baseUrl}/public/auth`;
 
-    const params: any = {
+    const params: DeribitAuthRequestParams = {
       grant_type: account.grantType,
       client_id: account.clientId,
       client_secret: account.clientSecret,
@@ -62,18 +74,17 @@ export class DeribitAuth {
     }
 
     try {
-      const response: AxiosResponse<AuthResponse> = await this.httpClient.get(url, {
-        params,
-      });
+      const response = await this.makeAuthRequest(url, params);
 
-      if (response.data.access_token) {
-        const expiresAt = Date.now() + (response.data.expires_in * 1000);
-        
+      if (response.data.result && response.data.result.access_token) {
+        const result = response.data.result;
+        const expiresAt = Date.now() + (result.expires_in * 1000);
+
         return {
-          accessToken: response.data.access_token,
-          refreshToken: response.data.refresh_token,
+          accessToken: result.access_token,
+          refreshToken: result.refresh_token,
           expiresAt,
-          scope: response.data.scope,
+          scope: result.scope,
         };
       } else {
         throw new Error('Invalid response: No access token received');
@@ -119,13 +130,14 @@ export class DeribitAuth {
         params,
       });
 
-      const expiresAt = Date.now() + (response.data.expires_in * 1000);
-      
+      const result = response.data.result;
+      const expiresAt = Date.now() + (result.expires_in * 1000);
+
       const newToken: AuthToken = {
-        accessToken: response.data.access_token,
-        refreshToken: response.data.refresh_token,
+        accessToken: result.access_token,
+        refreshToken: result.refresh_token,
         expiresAt,
-        scope: response.data.scope,
+        scope: result.scope,
       };
 
       this.tokens.set(accountName, newToken);
@@ -141,8 +153,8 @@ export class DeribitAuth {
    * Check if a token is valid (not expired)
    */
   private isTokenValid(token: AuthToken): boolean {
-    // Add 60 seconds buffer before expiration
-    return Date.now() < (token.expiresAt - 60000);
+    // Add 5 seconds buffer before expiration
+    return Date.now() < (token.expiresAt - 5 * 1000);
   }
 
   /**

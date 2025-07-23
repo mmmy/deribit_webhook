@@ -1,4 +1,4 @@
-import type { DeribitOptionInstrument, OptionDetails, DeltaFilterResult } from '../types';
+import type { DeltaFilterResult, DeribitOptionInstrument, OptionDetails } from '../types';
 import { ApiKeyConfig, AuthResponse } from '../types';
 
 export class MockDeribitClient {
@@ -14,11 +14,19 @@ export class MockDeribitClient {
     await new Promise(resolve => setTimeout(resolve, 500));
     
     return {
-      access_token: 'mock_access_token_' + Date.now(),
-      expires_in: 3600,
-      refresh_token: 'mock_refresh_token_' + Date.now(),
-      scope: account.scope || 'read write',
-      token_type: 'bearer'
+      jsonrpc: "2.0",
+      result: {
+        access_token: 'mock_access_token_' + Date.now(),
+        expires_in: 3600,
+        refresh_token: 'mock_refresh_token_' + Date.now(),
+        scope: account.scope || 'read write',
+        token_type: 'bearer',
+        enabled_features: []
+      },
+      testnet: useTestEnvironment,
+      usIn: Date.now() * 1000,
+      usOut: Date.now() * 1000,
+      usDiff: 0
     };
   }
 

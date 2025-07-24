@@ -1,20 +1,20 @@
-import axios, { AxiosInstance, AxiosResponse } from 'axios';
+import axios, { AxiosResponse } from 'axios';
 import { ConfigLoader } from '../config';
 import { ApiKeyConfig, AuthResponse, AuthToken, DeribitAuthRequestParams, DeribitError } from '../types';
+import { DeribitPublicAPI, getConfigByEnvironment } from '../api';
 
 export class DeribitAuth {
-  private httpClient: AxiosInstance;
+  private publicAPI: DeribitPublicAPI;
   private configLoader: ConfigLoader;
   private tokens: Map<string, AuthToken> = new Map();
 
   constructor() {
     this.configLoader = ConfigLoader.getInstance();
-    this.httpClient = axios.create({
-      timeout: 30000,
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
+    
+    // 创建公共API实例用于认证
+    const isTestEnv = process.env.USE_TEST_ENVIRONMENT === 'true';
+    const apiConfig = getConfigByEnvironment(isTestEnv);
+    this.publicAPI = new DeribitPublicAPI(apiConfig);
   }
 
   /**
@@ -45,13 +45,21 @@ export class DeribitAuth {
 
   /**
    * Make HTTP request to Deribit auth endpoint
-   * @param url The authentication URL
    * @param params The request parameters containing authentication data
    * @returns The HTTP response containing auth data
    */
-  private async makeAuthRequest(url: string, params: DeribitAuthRequestParams): Promise<AxiosResponse<AuthResponse>> {
-    return await this.httpClient.get(url, {
+  private async makeAuthRequest(params: DeribitAuthRequestParams | { grant_type: string; refresh_token: string }): Promise<AxiosResponse<AuthResponse>> {
+    // 使用axios直接调用认证接口，因为这是特殊的认证端点
+    const isTestEnv = process.env.USE_TEST_ENVIRONMENT === 'true';
+    const apiConfig = getConfigByEnvironment(isTestEnv);
+    const url = `${apiConfig.baseUrl}/public/auth`;
+    
+    return await axios.get(url, {
       params,
+      timeout: 30000,
+      headers: {
+        'Content-Type': 'application/json',
+      },
     });
   }
 
@@ -59,9 +67,6 @@ export class DeribitAuth {
    * Request a new access token from Deribit
    */
   private async requestNewToken(account: ApiKeyConfig): Promise<AuthToken> {
-    const baseUrl = this.configLoader.getApiBaseUrl();
-    const url = `${baseUrl}/public/auth`;
-
     const params: DeribitAuthRequestParams = {
       grant_type: account.grantType,
       client_id: account.clientId,
@@ -74,7 +79,7 @@ export class DeribitAuth {
     }
 
     try {
-      const response = await this.makeAuthRequest(url, params);
+      const response = await this.makeAuthRequest(params);
 
       if (response.data.result && response.data.result.access_token) {
         const result = response.data.result;
@@ -117,18 +122,13 @@ export class DeribitAuth {
       throw new Error('No refresh token available');
     }
 
-    const baseUrl = this.configLoader.getApiBaseUrl();
-    const url = `${baseUrl}/public/auth`;
-
     const params = {
       grant_type: 'refresh_token',
       refresh_token: cachedToken.refreshToken,
     };
 
     try {
-      const response: AxiosResponse<AuthResponse> = await this.httpClient.get(url, {
-        params,
-      });
+      const response: AxiosResponse<AuthResponse> = await this.makeAuthRequest(params);
 
       const result = response.data.result;
       const expiresAt = Date.now() + (result.expires_in * 1000);
@@ -208,10 +208,9 @@ export class DeribitAuth {
 
       // Test first enabled account
       const account = accounts[0]!;
-      const baseUrl = this.configLoader.getApiBaseUrl();
       
-      // Test public endpoint first
-      await this.httpClient.get(`${baseUrl}/public/test`);
+      // Test public endpoint first using the new API
+      await this.publicAPI.testConnection();
       
       // Test authentication
       await this.authenticate(account.name);

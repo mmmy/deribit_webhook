@@ -1,4 +1,3 @@
-import axios, { AxiosInstance } from 'axios';
 import { ConfigLoader } from '../config';
 import {
   DeribitOptionInstrument,
@@ -13,7 +12,6 @@ import { MockDeribitClient } from './mock-deribit';
  * 期权服务类 - 提供期权相关功能
  */
 export class OptionService {
-  private httpClient: AxiosInstance;
   private configLoader: ConfigLoader;
   private deribitAuth: DeribitAuth;
   private deribitClient: DeribitClient;
@@ -26,14 +24,6 @@ export class OptionService {
     this.deribitClient = new DeribitClient();
     this.mockClient = new MockDeribitClient();
     this.useMockMode = process.env.USE_MOCK_MODE === 'true';
-    
-    this.httpClient = axios.create({
-      timeout: 15000,
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'Deribit-Options-Service/1.0.0'
-      },
-    });
   }
 
   /**
@@ -138,19 +128,13 @@ export class OptionService {
    */
   public async getOptionDetails(instrumentName: string): Promise<any> {
     try {
-      const baseUrl = this.configLoader.getApiBaseUrl();
-      
       if (this.useMockMode) {
         // 返回模拟数据
         return this.generateMockOptionDetails(instrumentName);
       }
       
-      // 实际API调用
-      const response = await this.httpClient.get(`${baseUrl}/public/ticker`, {
-        params: { instrument_name: instrumentName }
-      });
-      
-      return response.data.result;
+      // 使用重构后的DeribitClient调用API
+      return await this.deribitClient.getOptionDetails(instrumentName);
     } catch (error) {
       console.error(`Failed to get details for ${instrumentName}:`, error);
       throw error;

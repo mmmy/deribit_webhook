@@ -1,25 +1,33 @@
-import axios, { AxiosInstance, AxiosResponse } from "axios";
 import { ConfigLoader } from "../config";
 import type {
   DeltaFilterResult,
   DeribitOptionInstrument,
   OptionDetails,
 } from "../types";
-import { ApiKeyConfig, AuthResponse } from "../types";
+import { DeribitPublicAPI, DeribitPrivateAPI, getConfigByEnvironment, createAuthInfo } from "../api";
 
 export class DeribitClient {
-  private httpClient: AxiosInstance;
   private configLoader: ConfigLoader;
+  private publicAPI: DeribitPublicAPI;
+  private privateAPI: DeribitPrivateAPI | null = null;
 
   constructor() {
     this.configLoader = ConfigLoader.getInstance();
-    this.httpClient = axios.create({
-      timeout: 15000,
-      headers: {
-        "Content-Type": "application/json",
-        "User-Agent": "Deribit-Options-Microservice/1.0.0",
-      },
-    });
+    
+    // 创建公共API实例
+    const isTestEnv = process.env.USE_TEST_ENVIRONMENT === 'true';
+    const apiConfig = getConfigByEnvironment(isTestEnv);
+    this.publicAPI = new DeribitPublicAPI(apiConfig);
+  }
+
+  /**
+   * 初始化私有API（需要认证token）
+   */
+  private initPrivateAPI(accessToken: string) {
+    const isTestEnv = process.env.USE_TEST_ENVIRONMENT === 'true';
+    const apiConfig = getConfigByEnvironment(isTestEnv);
+    const authInfo = createAuthInfo(accessToken);
+    this.privateAPI = new DeribitPrivateAPI(apiConfig, authInfo);
   }
 
   /**
@@ -27,14 +35,10 @@ export class DeribitClient {
    */
   async testConnectivity(): Promise<boolean> {
     try {
-      const baseUrl = this.configLoader.getApiBaseUrl();
-      console.log(`Testing connectivity to: ${baseUrl}`);
-
-      const response = await this.httpClient.get(`${baseUrl}/public/get_time`, {
-        timeout: 10000,
-      });
-
-      console.log("Connectivity test successful:", response.data);
+      console.log(`Testing connectivity to: ${this.publicAPI}`);
+      
+      const result = await this.publicAPI.getTime();
+      console.log("Connectivity test successful:", result);
       return true;
     } catch (error) {
       console.error(
@@ -48,52 +52,16 @@ export class DeribitClient {
   /**
    * Authenticate with Deribit using client credentials
    */
-  async authenticate(account: ApiKeyConfig): Promise<AuthResponse | null> {
-    try {
-      const baseUrl = this.configLoader.getApiBaseUrl();
-      console.log(`Authenticating with: ${baseUrl}/public/auth`);
-
-      const params = {
-        grant_type: account.grantType,
-        client_id: account.clientId,
-        client_secret: account.clientSecret,
-      };
-
-      console.log("Auth params:", { ...params, client_secret: "***" });
-
-      const response: AxiosResponse<AuthResponse> = await this.httpClient.get(
-        `${baseUrl}/public/auth`,
-        { params, timeout: 10000 }
-      );
-
-      console.log("Authentication successful:", {
-        token_type: response.data.result.token_type,
-        expires_in: response.data.result.expires_in,
-        scope: response.data.result.scope,
-      });
-
-      return response.data;
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        console.error("Auth error:", {
-          status: error.response?.status,
-          statusText: error.response?.statusText,
-          data: error.response?.data,
-          message: error.message,
-        });
-      } else {
-        console.error("Auth error:", error);
-      }
-      return null;
-    }
+  async authenticate(account: any): Promise<any | null> {
+    // 注意：认证功能已迁移到DeribitAuth类
+    // 这里保留接口兼容性，但建议直接使用DeribitAuth
+    console.warn("DeribitClient.authenticate is deprecated, use DeribitAuth instead");
+    return null;
   }
 
   /**
-   * Get available instruments (options)
-   */
-  /**
-   * 获取可交易工具列表
-   * @param currency 货币类型，如 'BTC', 'ETH'
+   * 获取期权/期货工具列表
+   * @param currency 货币类型
    * @param kind 工具类型，如 'option', 'future'
    * @returns 工具列表
    */
@@ -102,15 +70,12 @@ export class DeribitClient {
     kind: string = "option"
   ): Promise<DeribitOptionInstrument[]> {
     try {
-      const baseUrl = this.configLoader.getApiBaseUrl();
-      const response = await this.httpClient.get(
-        `${baseUrl}/public/get_instruments`,
-        {
-          params: { currency, kind, expired: false },
-        }
-      );
-
-      return response.data.result || [];
+      const result = await this.publicAPI.getInstruments({
+        currency,
+        kind,
+        expired: false
+      });
+      return result || [];
     } catch (error) {
       console.error("Failed to get instruments:", error);
       return [];
@@ -118,7 +83,7 @@ export class DeribitClient {
   }
 
   /**
-   * 获取期权详细信息 (包含希腊字母和价格信息)
+   * 获取期权详细信息
    * @param instrumentName 期权合约名称
    * @returns 期权详细信息
    */
@@ -126,12 +91,10 @@ export class DeribitClient {
     instrumentName: string
   ): Promise<OptionDetails | null> {
     try {
-      const baseUrl = this.configLoader.getApiBaseUrl();
-      const response = await this.httpClient.get(`${baseUrl}/public/ticker`, {
-        params: { instrument_name: instrumentName },
+      const result = await this.publicAPI.getTicker({
+        instrument_name: instrumentName
       });
-
-      return response.data.result || null;
+      return result || null;
     } catch (error) {
       console.error(
         `Failed to get option details for ${instrumentName}:`,
@@ -143,7 +106,7 @@ export class DeribitClient {
 
   /**
    * 根据Delta值筛选最优期权
-   * @param currency 货币类型，如 'BTC', 'ETH'
+   * @param currency 货币类型
    * @param minExpiredDays 最小到期天数
    * @param delta 目标Delta值
    * @param longSide 是否为多头方向 (true=call, false=put)
@@ -216,7 +179,7 @@ export class DeribitClient {
         return null;
       }
 
-      // 3.2 每个到期日选择Delta最接近的2个期权
+      // 4. 遍历最近的两个到期日，每个到期日选择2个最接近目标Delta的期权
       const candidateOptions: DeltaFilterResult[] = [];
 
       for (const expiryTimestamp of nearestTwoExpiries) {
@@ -266,7 +229,7 @@ export class DeribitClient {
           }
         }
 
-        // 按Delta距离排序，取前2个
+        // 排序并选择前2个
         optionsWithDelta.sort((a, b) => a.deltaDistance - b.deltaDistance);
         const top2ForExpiry = optionsWithDelta.slice(0, 2);
 
@@ -293,11 +256,18 @@ export class DeribitClient {
         return null;
       }
 
-      console.log(`🔍 Total candidate options: ${candidateOptions.length}`);
-
-      // 3.3 从这4个(或更少)期权中选择盘口价差最小的
+      // 5. 从所有候选期权中选择最优的一个
+      // 首先按Delta距离排序，然后按价差比率排序
       const bestOption = candidateOptions.reduce((best, current) =>
-        current.spreadRatio < best.spreadRatio ? current : best
+        current.deltaDistance < best.deltaDistance ||
+        (current.deltaDistance === best.deltaDistance &&
+          current.spreadRatio < best.spreadRatio)
+          ? current
+          : best.spreadRatio < current.spreadRatio
+          ? best
+          : current.spreadRatio < best.spreadRatio
+          ? current
+          : best
       );
 
       console.log(
@@ -329,29 +299,32 @@ export class DeribitClient {
     accessToken?: string
   ): Promise<any> {
     try {
-      const baseUrl = this.configLoader.getApiBaseUrl();
-      const endpoint = direction === 'buy' ? '/private/buy' : '/private/sell';
+      if (!accessToken) {
+        throw new Error('Access token required for private API calls');
+      }
+
+      // 初始化私有API
+      this.initPrivateAPI(accessToken);
       
-      const orderParams = {
-        otoco_config: [],
+      if (!this.privateAPI) {
+        throw new Error('Failed to initialize private API');
+      }
+
+      const orderParams: any = {
         instrument_name: instrumentName,
         amount: amount,
         type: orderType,
-        ...(orderType === 'limit' && price && { price }) 
       };
 
-      const response = await this.httpClient.post(`${baseUrl}${endpoint}`, orderParams, {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      if (response.data.error) {
-        throw new Error(`Deribit API error: ${response.data.error.message}`);
+      if (orderType === 'limit' && price) {
+        orderParams.price = price;
       }
 
-      return response.data.result;
+      if (direction === 'buy') {
+        return await this.privateAPI.buy(orderParams);
+      } else {
+        return await this.privateAPI.sell(orderParams);
+      }
     } catch (error) {
       console.error('Error placing order:', error);
       throw error;

@@ -4,6 +4,7 @@ import express from 'express';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import { ConfigLoader, DeribitAuth, DeribitClient, MockDeribitClient, OptionTradingService, WebhookResponse, WebhookSignalPayload } from './services';
+import { DeribitPrivateAPI, createAuthInfo, getConfigByEnvironment } from './api';
 
 // Load environment variables
 dotenv.config();
@@ -134,32 +135,101 @@ app.get('/api/instruments', async (req, res) => {
   }
 });
 
-// Get account summary endpoint
-// todo: path: /api/account/:accountName/:currency
-// return: 仓位列表
-app.get('/api/account/:currency', async (req, res) => {
+// Get account positions endpoint - 获取账户仓位列表
+app.get('/api/account/:accountName/:currency', async (req, res) => {
   try {
-    const currency = req.params.currency.toUpperCase();
+    const { accountName, currency } = req.params;
+    const currencyUpper = currency.toUpperCase();
     
+    // 验证账户
+    const account = configLoader.getAccountByName(accountName);
+    if (!account) {
+      return res.status(404).json({
+        success: false,
+        message: `Account not found: ${accountName}`
+      });
+    }
+
     if (useMockMode) {
-      const summary = await mockClient.getAccountSummary(currency);
+      // Mock模式：返回模拟数据
+      const summary = await mockClient.getAccountSummary(currencyUpper);
       res.json({
         success: true,
         mockMode: true,
-        currency,
-        summary
+        accountName,
+        currency: currencyUpper,
+        data: {
+          summary,
+          positions: [
+            {
+              instrument_name: `${currencyUpper}-25JUL25-50000-C`,
+              size: 10.5,
+              direction: 'buy',
+              average_price: 0.025,
+              mark_price: 0.028,
+              unrealized_pnl: 0.315,
+              delta: 0.65
+            }
+          ]
+        }
       });
     } else {
-      res.json({
-        success: false,
-        message: 'Real account summary not implemented yet',
-        mockMode: false
-      });
+      // 真实模式：调用Deribit API
+      try {
+        // 获取认证token
+        await deribitAuth.authenticate(accountName);
+        const tokenInfo = deribitAuth.getTokenInfo(accountName);
+        
+        if (!tokenInfo) {
+          throw new Error('Authentication failed');
+        }
+
+        // 配置API
+        const isTestEnv = process.env.USE_TEST_ENVIRONMENT === 'true';
+        const apiConfig = getConfigByEnvironment(isTestEnv);
+        const authInfo = createAuthInfo(tokenInfo.accessToken);
+
+        // 创建私有API实例
+        const privateAPI = new DeribitPrivateAPI(apiConfig, authInfo);
+
+        // 并行请求账户摘要和持仓信息
+        const [accountSummary, positions] = await Promise.all([
+          privateAPI.getAccountSummary({ 
+            currency: currencyUpper,
+            extended: true 
+          }),
+          privateAPI.getPositions({ 
+            currency: currencyUpper 
+          })
+        ]);
+
+        res.json({
+          success: true,
+          mockMode: false,
+          accountName,
+          currency: currencyUpper,
+          data: {
+            summary: accountSummary,
+            positions: positions,
+            timestamp: new Date().toISOString()
+          }
+        });
+
+      } catch (authError) {
+        console.error(`Authentication error for account ${accountName}:`, authError);
+        res.status(401).json({
+          success: false,
+          message: 'Authentication failed',
+          accountName,
+          error: authError instanceof Error ? authError.message : 'Unknown auth error'
+        });
+      }
     }
   } catch (error) {
+    console.error('Error in account positions endpoint:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to get account summary',
+      message: 'Failed to get account positions',
       error: error instanceof Error ? error.message : 'Unknown error'
     });
   }

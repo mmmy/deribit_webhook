@@ -25,8 +25,11 @@ export class DeribitPrivateAPI {
   private httpClient: AxiosInstance;
 
   constructor(config: DeribitConfig, auth: AuthInfo) {
+    // Deribit JSON-RPC endpoint
+    const jsonRpcUrl = config.baseUrl.endsWith('/api/v2') ? config.baseUrl : `${config.baseUrl}/api/v2`;
+
     this.httpClient = axios.create({
-      baseURL: config.baseUrl,
+      baseURL: jsonRpcUrl,
       timeout: config.timeout || 15000,
       headers: {
         'Content-Type': 'application/json',
@@ -45,13 +48,25 @@ export class DeribitPrivateAPI {
 
   /**
    * 获取账户摘要信息
-   * GET /private/get_account_summary
+   * JSON-RPC: private/get_account_summary
    */
   async getAccountSummary(params: {
     currency: string;          // BTC, ETH
     extended?: boolean;        // 是否返回扩展信息
   }) {
-    const response = await this.httpClient.get('/private/get_account_summary', { params });
+    const jsonRpcRequest = {
+      jsonrpc: "2.0",
+      id: Date.now(),
+      method: "private/get_account_summary",
+      params: params
+    };
+
+    const response = await this.httpClient.post('', jsonRpcRequest);
+
+    if (response.data.error) {
+      throw new Error(`Deribit API error: ${response.data.error.message} (code: ${response.data.error.code})`);
+    }
+
     return response.data.result;
   }
 
@@ -115,7 +130,7 @@ export class DeribitPrivateAPI {
 
   /**
    * 买入下单
-   * POST /private/buy
+   * JSON-RPC: private/buy
    */
   async buy(params: {
     instrument_name: string;   // 期权合约名称
@@ -131,13 +146,25 @@ export class DeribitPrivateAPI {
     trigger?: 'index_price' | 'mark_price' | 'last_price';  // 触发价格类型
     advanced?: string;         // 高级选项
   }) {
-    const response = await this.httpClient.post('/private/buy', params);
+    const jsonRpcRequest = {
+      jsonrpc: "2.0",
+      id: Date.now(),
+      method: "private/buy",
+      params: params
+    };
+
+    const response = await this.httpClient.post('', jsonRpcRequest);
+
+    if (response.data.error) {
+      throw new Error(`Deribit API error: ${response.data.error.message} (code: ${response.data.error.code})`);
+    }
+
     return response.data.result;
   }
 
   /**
    * 卖出下单
-   * POST /private/sell
+   * JSON-RPC: private/sell
    */
   async sell(params: {
     instrument_name: string;   // 期权合约名称
@@ -153,7 +180,19 @@ export class DeribitPrivateAPI {
     trigger?: 'index_price' | 'mark_price' | 'last_price';  // 触发价格类型
     advanced?: string;         // 高级选项
   }) {
-    const response = await this.httpClient.post('/private/sell', params);
+    const jsonRpcRequest = {
+      jsonrpc: "2.0",
+      id: Date.now(),
+      method: "private/sell",
+      params: params
+    };
+
+    const response = await this.httpClient.post('', jsonRpcRequest);
+
+    if (response.data.error) {
+      throw new Error(`Deribit API error: ${response.data.error.message} (code: ${response.data.error.code})`);
+    }
+
     return response.data.result;
   }
 
@@ -285,7 +324,7 @@ export class DeribitPrivateAPI {
 }
 
 // 导出接口供外部使用
-export { DeribitConfig, AuthInfo };
+export { AuthInfo, DeribitConfig };
 
 // 工厂函数，创建API实例
 export const createDeribitPrivateAPI = (config: DeribitConfig, auth: AuthInfo) => {

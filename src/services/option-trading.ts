@@ -1,5 +1,11 @@
+import Decimal from 'decimal.js';
 import { ConfigLoader } from '../config';
-import { OptionTradingParams, OptionTradingResult, WebhookSignalPayload } from '../types';
+import {
+  DeribitOptionInstrument,
+  OptionTradingParams,
+  OptionTradingResult,
+  WebhookSignalPayload
+} from '../types';
 import { DeribitAuth } from './auth';
 import { DeribitClient } from './deribit-client';
 import { MockDeribitClient } from './mock-deribit';
@@ -223,6 +229,81 @@ export class OptionTradingService {
   }
 
   /**
+   * 根据分级tick size规则计算正确的tick size
+   */
+  private getCorrectTickSize(price: number, baseTickSize: number, tickSizeSteps?: any[]): number {
+    if (!tickSizeSteps || tickSizeSteps.length === 0) {
+      return baseTickSize;
+    }
+
+    // 从高到低检查tick size steps
+    for (const step of tickSizeSteps.sort((a, b) => b.above_price - a.above_price)) {
+      if (price > step.above_price) {
+        return step.tick_size;
+      }
+    }
+
+    return baseTickSize;
+  }
+
+  /**
+   * 修正期权订单参数以符合Deribit要求
+   * 使用decimal.js解决浮点数精度问题
+   * 通用函数，支持所有货币的期权
+   */
+  private correctOrderParams(
+    price: number,
+    amount: number,
+    instrumentDetail: DeribitOptionInstrument // 期权详情，包含tick_size, tick_size_steps, min_trade_amount等
+  ) {
+    const {
+      tick_size: baseTickSize,
+      tick_size_steps: tickSizeSteps,
+      min_trade_amount: minTradeAmount,
+      instrument_name: instrumentName
+    } = instrumentDetail;
+
+    // 计算正确的tick size
+    const correctTickSize = this.getCorrectTickSize(price, baseTickSize, tickSizeSteps);
+
+    // 使用Decimal.js进行精确计算
+    const priceDecimal = new Decimal(price);
+    const tickSizeDecimal = new Decimal(correctTickSize);
+    const minTradeAmountDecimal = new Decimal(minTradeAmount);
+    const amountDecimal = new Decimal(amount);
+
+    // 修正价格到最接近的tick size倍数
+    const steps = priceDecimal.dividedBy(tickSizeDecimal).toDecimalPlaces(0, Decimal.ROUND_HALF_UP);
+    const correctedPriceDecimal = steps.times(tickSizeDecimal);
+
+    // 修正数量到最小交易量的倍数（向上取整）
+    const amountSteps = amountDecimal.dividedBy(minTradeAmountDecimal).toDecimalPlaces(0, Decimal.ROUND_UP);
+    const correctedAmountDecimal = amountSteps.times(minTradeAmountDecimal);
+
+    // 转换回number类型
+    const correctedPrice = correctedPriceDecimal.toNumber();
+    const correctedAmount = correctedAmountDecimal.toNumber();
+
+    console.log(`🔧 Universal parameter correction for ${instrumentName}:`);
+    console.log(`   Original price: ${price} → Corrected: ${correctedPrice}`);
+    console.log(`   Original amount: ${amount} → Corrected: ${correctedAmount}`);
+    console.log(`   Base tick size: ${baseTickSize}, Used tick size: ${correctTickSize}`);
+    console.log(`   Min trade amount: ${minTradeAmount}`);
+    console.log(`   Price steps: ${steps.toString()}, Amount steps: ${amountSteps.toString()}`);
+
+    if (tickSizeSteps && tickSizeSteps.length > 0) {
+      console.log(`   Tick size steps applied: ${JSON.stringify(tickSizeSteps)}`);
+    }
+
+    return {
+      correctedPrice,
+      correctedAmount,
+      tickSize: correctTickSize,
+      minTradeAmount
+    };
+  }
+
+  /**
    * 下单执行期权交易
    */
   private async placeOptionOrder(instrumentName: string, params: OptionTradingParams, useMockMode: boolean): Promise<OptionTradingResult> {
@@ -260,19 +341,31 @@ export class OptionTradingService {
           throw new Error(`Authentication failed for account: ${params.accountName}`);
         }
         
-        // 2. 获取期权详情以计算价格和数量
+        // 2. 获取期权工具信息（包含tick_size等）和价格信息
+        // 2.1 获取期权工具信息
+        const instruments = await this.deribitClient.getInstruments(
+          instrumentName.split('-')[0], // 提取货币类型，如BTC
+          'option'
+        );
+        const instrumentInfo = instruments.find(inst => inst.instrument_name === instrumentName);
+        if (!instrumentInfo) {
+          throw new Error(`Failed to get instrument info for ${instrumentName}`);
+        }
+
+        // 2.2 获取期权价格信息
         const optionDetails = await this.deribitClient.getOptionDetails(instrumentName);
         if (!optionDetails) {
           throw new Error(`Failed to get option details for ${instrumentName}`);
         }
-        
+
         // 3. 计算入场价格 (买一 + 卖一) / 2
         const entryPrice = (optionDetails.best_bid_price + optionDetails.best_ask_price) / 2;
         console.log(`📊 Entry price calculated: ${entryPrice} (bid: ${optionDetails.best_bid_price}, ask: ${optionDetails.best_ask_price})`);
-        
+        console.log(`📊 Instrument info: tick_size=${instrumentInfo.tick_size}, min_trade_amount=${instrumentInfo.min_trade_amount}`);
+
         // 4. 计算下单数量
         let orderQuantity = params.quantity;
-        
+
         // 如果qtyType是cash，将美元金额转换为合约数量
         if (params.qtyType === 'cash') {
           // 开仓大小 = (size / 指数价格) * 合约乘数
@@ -280,20 +373,28 @@ export class OptionTradingService {
           orderQuantity = params.quantity / optionDetails.index_price;
           console.log(`💰 Cash mode: converting $${params.quantity} to ${orderQuantity} contracts at price ${entryPrice}`);
         }
-        
+
         if (orderQuantity <= 0) {
           throw new Error(`Invalid order quantity: ${orderQuantity}`);
         }
+
+        // 5. 修正订单参数以符合Deribit要求 - 使用期权工具信息
+        const correctedParams = this.correctOrderParams(entryPrice, orderQuantity, instrumentInfo);
+        console.log(`🔧 Parameter correction: price ${entryPrice} → ${correctedParams.correctedPrice}, amount ${orderQuantity} → ${correctedParams.correctedAmount}`);
+
+        // 使用修正后的参数
+        const finalPrice = correctedParams.correctedPrice;
+        const finalQuantity = correctedParams.correctedAmount;
         
-        // 5. 调用Deribit下单API
-        console.log(`📋 Placing order: ${params.direction} ${orderQuantity} contracts of ${instrumentName} at price ${entryPrice}`);
-        
+        // 6. 调用Deribit下单API - 使用修正后的参数
+        console.log(`📋 Placing order: ${params.direction} ${finalQuantity} contracts of ${instrumentName} at price ${finalPrice}`);
+
         const orderResult = await this.deribitClient.placeOrder(
           instrumentName,
           params.direction,
-          orderQuantity,
-          params.orderType || 'market',
-          params.orderType === 'limit' ? entryPrice : undefined,
+          finalQuantity,
+          'limit', // 使用限价单以确保价格正确
+          finalPrice, // 使用修正后的价格
           tokenInfo.accessToken
         );
         
@@ -302,14 +403,24 @@ export class OptionTradingService {
         return {
           success: true,
           orderId: orderResult.order?.order_id || `deribit_${Date.now()}`,
-          message: `Successfully placed ${params.direction} order for ${orderQuantity} contracts`,
+          message: `Successfully placed ${params.direction} order for ${finalQuantity} contracts`,
           instrumentName,
-          executedQuantity: orderResult.order?.filled_amount || orderQuantity,
-          executedPrice: orderResult.order?.average_price || entryPrice
+          executedQuantity: orderResult.order?.filled_amount || finalQuantity,
+          executedPrice: orderResult.order?.average_price || finalPrice
         };
       }
     } catch (error) {
       console.error(`❌ Failed to place order for ${instrumentName}:`, error);
+
+      // 详细错误日志
+      if (error instanceof Error) {
+        console.error(`Error message: ${error.message}`);
+        if ((error as any).response) {
+          console.error(`HTTP Status: ${(error as any).response.status}`);
+          console.error(`Response data:`, JSON.stringify((error as any).response.data, null, 2));
+        }
+      }
+
       return {
         success: false,
         message: 'Failed to place option order',

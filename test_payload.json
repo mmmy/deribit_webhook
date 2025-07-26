@@ -1,0 +1,11 @@
+{
+  "accountName": "yqtest",
+  "side": "buy",
+  "symbol": "BTCUSDT",
+  "size": "5000",
+  "qtyType": "cash",
+  "delta1": 0.7,
+  "n": 3,
+  "marketPosition": "long",
+  "prevMarketPosition": "flat"
+}

@@ -121,6 +121,12 @@ export interface OptionListParams {
   maxExpiry?: Date;                      // 最大到期时间
 }
 
+// Tick Size步骤接口 - 用于分级tick size规则
+export interface TickSizeStep {
+  above_price: number;                   // 价格阈值
+  tick_size: number;                     // 对应的tick size
+}
+
 // Deribit期权工具信息接口
 export interface DeribitOptionInstrument {
   instrument_name: string;               // 期权合约名称 (如 'BTC-25JUL25-50000-C')
@@ -129,7 +135,8 @@ export interface DeribitOptionInstrument {
   option_type: 'call' | 'put';          // 期权类型: call(看涨) 或 put(看跌)
   strike: number;                        // 行权价格
   expiration_timestamp: number;          // 到期时间戳 (毫秒)
-  tick_size: number;                     // 最小价格变动单位
+  tick_size: number;                     // 基础最小价格变动单位
+  tick_size_steps?: TickSizeStep[];      // 分级tick size规则 (可选)
   min_trade_amount: number;              // 最小交易数量
   contract_size: number;                 // 合约大小
   is_active: boolean;                    // 是否活跃

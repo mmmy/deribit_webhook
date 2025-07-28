@@ -13,7 +13,21 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 // Middleware
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'"],
+      fontSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      mediaSrc: ["'self'"],
+      frameSrc: ["'none'"],
+    },
+  },
+}));
 app.use(cors());
 app.use(morgan('combined'));
 app.use(express.json());
@@ -32,6 +46,9 @@ const optionTradingService = new OptionTradingService();
 
 // Determine if we should use mock mode (when network is unavailable)
 const useMockMode = process.env.USE_MOCK_MODE === 'true';
+
+// 静态文件服务
+app.use(express.static('public'));
 
 // API routes
 app.get('/api/status', (req, res) => {
@@ -419,6 +436,8 @@ app.get('/api/options/:currency/delta/:delta', async (req, res) => {
     });
   }
 });
+
+
 
 // Error handling
 process.on('uncaughtException', (error) => {

@@ -7,5 +7,6 @@
   "delta1": 0.7,
   "n": 3,
   "marketPosition": "long",
-  "prevMarketPosition": "flat"
+  "prevMarketPosition": "flat",
+  "exchange": "BINANCE"
 }

@@ -69,6 +69,7 @@ export interface WebhookSignalPayload {
   size: string;                          // 订单数量/合约数
   positionSize: string;                  // 当前仓位大小
   id: string;                           // 策略订单ID
+  tv_id: number;                        // TradingView信号ID
   alertMessage?: string;                 // 警报消息
   comment?: string;                      // 注释
   qtyType: 'fixed' | 'percent' | 'contracts'; // 数量类型

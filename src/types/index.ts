@@ -75,6 +75,7 @@ export interface WebhookSignalPayload {
   qtyType: 'fixed' | 'percent' | 'contracts'; // 数量类型
   delta1?: number;                       // 期权Delta值，用于开仓时选择期权
   n?: number;                           // 最小到期天数，用于开仓时选择期权
+  // todo: 增加delta2参数, 当/webhook/signal接收到开仓信号后, 会向交易所提交一个订单,交易所返回成功后, 且该订单不是立即成交单(不是市价单),  那么把这个订单记录到delta数据库中, delta2参数就是target_delta
 }
 
 // Webhook响应接口

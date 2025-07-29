@@ -690,20 +690,16 @@
 
                 if (refreshBtn) {
                     refreshBtn.addEventListener('click', function(e) {
-                        console.log('🔄 刷新按钮点击事件触发');
                         e.preventDefault();
                         refreshLiveData();
                     });
-                    console.log('✅ 刷新按钮事件监听器已添加');
                 }
 
                 if (refreshAllBtn) {
                     refreshAllBtn.addEventListener('click', function(e) {
-                        console.log('🔄 刷新所有按钮点击事件触发');
                         e.preventDefault();
                         refreshAllData();
                     });
-                    console.log('✅ 刷新所有按钮事件监听器已添加');
                 }
 
                 // 统一的事件委托处理器
@@ -776,7 +772,7 @@
                     }
                 });
 
-                console.log('✅ 事件委托已设置');
+
             }, 1000);
         });
 
@@ -1245,8 +1241,6 @@
 
         // 前端验证记录有效性
         function validateRecords() {
-            console.log('🔍 开始前端验证记录');
-
             validatedRecords = deltaRecords.map(record => {
                 let isValid = false;
                 let validationMessage = '';
@@ -1281,12 +1275,10 @@
 
             const validCount = validatedRecords.filter(r => r.is_valid).length;
             const invalidCount = validatedRecords.filter(r => !r.is_valid).length;
-            console.log(`✅ 验证完成: ${validCount}个有效, ${invalidCount}个无效`);
         }
 
         // 添加仓位到数据库 - 确保在全局作用域
         window.addPositionToDatabase = function(instrumentName) {
-            console.log('🎯 addPositionToDatabase 被调用:', instrumentName);
             try {
                 showQuickAddModal(instrumentName, 'position');
             } catch (error) {
@@ -1310,11 +1302,8 @@
 
         // 刷新实时数据
         async function refreshLiveData() {
-            console.log('🔄 refreshLiveData 函数被调用');
-            console.log('📊 当前账户:', currentAccount);
 
             if (!currentAccount) {
-                console.log('❌ 没有选择账户');
                 showError('请先选择账户');
                 return;
             }
@@ -1353,7 +1342,7 @@
 
                 showSuccess(`${selectedCurrency}实时数据刷新成功${mockMode} - 仓位: ${positionCount}个, 订单: ${orderCount}个`);
 
-                console.log(`✅ 刷新完成: ${positionCount}个仓位, ${orderCount}个订单`);
+
 
             } catch (error) {
                 console.error('❌ 刷新失败:', error);
@@ -1370,11 +1359,8 @@
 
         // 刷新所有数据 (包括数据库记录)
         async function refreshAllData() {
-            console.log('🔄 refreshAllData 函数被调用');
-            console.log('📊 当前账户:', currentAccount);
 
             if (!currentAccount) {
-                console.log('❌ 没有选择账户');
                 showError('请先选择账户');
                 return;
             }
@@ -1393,7 +1379,6 @@
                 await loadData();
 
                 showSuccess('所有数据刷新成功');
-                console.log('✅ 所有数据刷新完成');
 
             } catch (error) {
                 console.error('❌ 刷新所有数据失败:', error);
@@ -1475,7 +1460,7 @@
                     orderId: orderId
                 };
 
-                console.log('✅ 显示快速添加模态框');
+
                 document.getElementById('quickAddModal').style.display = 'block';
 
             } catch (error) {

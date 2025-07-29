@@ -56,27 +56,55 @@ export class DeltaManager {
    * 检查并执行数据库迁移
    */
   private checkAndMigrate(): void {
-    // 检查表是否存在tv_id列
     const tableInfo = this.db.pragma('table_info(delta_records)') as any[];
     const hasTV_ID = tableInfo.some((col: any) => col.name === 'tv_id');
+    const hasTargetDelta = tableInfo.some((col: any) => col.name === 'target_delta');
+    const hasDelta = tableInfo.some((col: any) => col.name === 'delta');
 
+    // 迁移1: 添加tv_id列
     if (!hasTV_ID && tableInfo.length > 0) {
       console.log('🔄 检测到数据库结构变更，执行迁移...');
 
-      // 添加tv_id列
       try {
         this.db.exec('ALTER TABLE delta_records ADD COLUMN tv_id INTEGER');
         console.log('✅ 已添加tv_id列');
 
-        // 为现有记录设置默认tv_id值
         this.db.exec('UPDATE delta_records SET tv_id = 0 WHERE tv_id IS NULL');
         console.log('✅ 已为现有记录设置默认tv_id值');
 
-        // 添加NOT NULL约束（通过重建表）
         this.rebuildTableWithTVID();
 
       } catch (error) {
         console.error('❌ 数据库迁移失败:', error);
+        throw error;
+      }
+    }
+
+    // 迁移2: 将delta字段重命名为target_delta
+    if (hasDelta && !hasTargetDelta && tableInfo.length > 0) {
+      console.log('🔄 检测到delta字段需要重命名为target_delta，执行迁移...');
+
+      try {
+        this.rebuildTableWithTargetDelta();
+        console.log('✅ 已将delta字段重命名为target_delta');
+
+      } catch (error) {
+        console.error('❌ delta字段重命名失败:', error);
+        throw error;
+      }
+    }
+
+    // 迁移3: 将tv_id字段改为可空
+    const tvIdColumn = tableInfo.find((col: any) => col.name === 'tv_id');
+    if (tvIdColumn && tvIdColumn.notnull === 1 && tableInfo.length > 0) {
+      console.log('🔄 检测到tv_id字段需要改为可空，执行迁移...');
+
+      try {
+        this.rebuildTableWithNullableTvId();
+        console.log('✅ 已将tv_id字段改为可空');
+
+      } catch (error) {
+        console.error('❌ tv_id字段迁移失败:', error);
         throw error;
       }
     }
@@ -121,6 +149,82 @@ export class DeltaManager {
   }
 
   /**
+   * 重建表以将delta字段重命名为target_delta
+   */
+  private rebuildTableWithTargetDelta(): void {
+    const transaction = this.db.transaction(() => {
+      // 创建新表
+      this.db.exec(`
+        CREATE TABLE delta_records_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          account_id TEXT NOT NULL,
+          instrument_name TEXT NOT NULL,
+          order_id TEXT,
+          target_delta REAL NOT NULL CHECK (target_delta >= -1 AND target_delta <= 1),
+          tv_id INTEGER NOT NULL,
+          record_type TEXT NOT NULL CHECK (record_type IN ('position', 'order')),
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
+      // 复制数据，将delta字段映射到target_delta
+      this.db.exec(`
+        INSERT INTO delta_records_new (id, account_id, instrument_name, order_id, target_delta, tv_id, record_type, created_at, updated_at)
+        SELECT id, account_id, instrument_name, order_id, delta, tv_id, record_type, created_at, updated_at
+        FROM delta_records
+      `);
+
+      // 删除旧表
+      this.db.exec('DROP TABLE delta_records');
+
+      // 重命名新表
+      this.db.exec('ALTER TABLE delta_records_new RENAME TO delta_records');
+    });
+
+    transaction();
+    console.log('✅ delta字段已重命名为target_delta');
+  }
+
+  /**
+   * 重建表以将tv_id字段改为可空
+   */
+  private rebuildTableWithNullableTvId(): void {
+    const transaction = this.db.transaction(() => {
+      // 创建新表
+      this.db.exec(`
+        CREATE TABLE delta_records_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          account_id TEXT NOT NULL,
+          instrument_name TEXT NOT NULL,
+          order_id TEXT,
+          target_delta REAL NOT NULL CHECK (target_delta >= -1 AND target_delta <= 1),
+          tv_id INTEGER,
+          record_type TEXT NOT NULL CHECK (record_type IN ('position', 'order')),
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
+      // 复制数据
+      this.db.exec(`
+        INSERT INTO delta_records_new (id, account_id, instrument_name, order_id, target_delta, tv_id, record_type, created_at, updated_at)
+        SELECT id, account_id, instrument_name, order_id, target_delta, tv_id, record_type, created_at, updated_at
+        FROM delta_records
+      `);
+
+      // 删除旧表
+      this.db.exec('DROP TABLE delta_records');
+
+      // 重命名新表
+      this.db.exec('ALTER TABLE delta_records_new RENAME TO delta_records');
+    });
+
+    transaction();
+    console.log('✅ tv_id字段已改为可空');
+  }
+
+  /**
    * 初始化数据库表
    */
   private initializeTables(): void {
@@ -132,8 +236,8 @@ export class DeltaManager {
         account_id TEXT NOT NULL,
         instrument_name TEXT NOT NULL,
         order_id TEXT,
-        delta REAL NOT NULL CHECK (delta >= -1 AND delta <= 1),
-        tv_id INTEGER NOT NULL,
+        target_delta REAL NOT NULL CHECK (target_delta >= -1 AND target_delta <= 1),
+        tv_id INTEGER,
         record_type TEXT NOT NULL CHECK (record_type IN ('position', 'order')),
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -178,7 +282,7 @@ export class DeltaManager {
    */
   public createRecord(input: CreateDeltaRecordInput): DeltaRecord {
     const insertSQL = `
-      INSERT INTO delta_records (account_id, instrument_name, order_id, delta, tv_id, record_type)
+      INSERT INTO delta_records (account_id, instrument_name, order_id, target_delta, tv_id, record_type)
       VALUES (?, ?, ?, ?, ?, ?)
     `;
 
@@ -188,7 +292,7 @@ export class DeltaManager {
         input.account_id,
         input.instrument_name,
         input.order_id || null,
-        input.delta,
+        input.target_delta,
         input.tv_id,
         input.record_type
       );
@@ -264,9 +368,9 @@ export class DeltaManager {
     const fields: string[] = [];
     const params: any[] = [];
 
-    if (input.delta !== undefined) {
-      fields.push('delta = ?');
-      params.push(input.delta);
+    if (input.target_delta !== undefined) {
+      fields.push('target_delta = ?');
+      params.push(input.target_delta);
     }
 
     if (input.order_id !== undefined) {
@@ -389,9 +493,9 @@ export class DeltaManager {
     let summarySQL = `
       SELECT
         account_id,
-        SUM(delta) as total_delta,
-        SUM(CASE WHEN record_type = 'position' THEN delta ELSE 0 END) as position_delta,
-        SUM(CASE WHEN record_type = 'order' THEN delta ELSE 0 END) as order_delta,
+        SUM(target_delta) as total_delta,
+        SUM(CASE WHEN record_type = 'position' THEN target_delta ELSE 0 END) as position_delta,
+        SUM(CASE WHEN record_type = 'order' THEN target_delta ELSE 0 END) as order_delta,
         COUNT(*) as record_count
       FROM delta_records
     `;
@@ -415,9 +519,9 @@ export class DeltaManager {
     let summarySQL = `
       SELECT
         instrument_name,
-        SUM(delta) as total_delta,
-        SUM(CASE WHEN record_type = 'position' THEN delta ELSE 0 END) as position_delta,
-        SUM(CASE WHEN record_type = 'order' THEN delta ELSE 0 END) as order_delta,
+        SUM(target_delta) as total_delta,
+        SUM(CASE WHEN record_type = 'position' THEN target_delta ELSE 0 END) as position_delta,
+        SUM(CASE WHEN record_type = 'order' THEN target_delta ELSE 0 END) as order_delta,
         COUNT(*) as record_count,
         GROUP_CONCAT(DISTINCT account_id) as accounts
       FROM delta_records
@@ -467,11 +571,11 @@ export class DeltaManager {
 
       if (existing) {
         // 更新现有记录
-        const updated = this.updateRecord(existing.id!, { delta: input.delta });
+        const updated = this.updateRecord(existing.id!, { target_delta: input.target_delta });
         if (!updated) {
           throw new Error('更新现有仓位记录失败');
         }
-        console.log(`🔄 更新仓位Delta: ${input.account_id}/${input.instrument_name} = ${input.delta}`);
+        console.log(`🔄 更新仓位Delta: ${input.account_id}/${input.instrument_name} = ${input.target_delta}`);
         return updated;
       }
     }

@@ -72,26 +72,50 @@ export class DeribitPrivateAPI {
 
   /**
    * 获取持仓列表
-   * GET /private/get_positions
+   * JSON-RPC: private/get_positions
    */
   async getPositions(params: {
     currency: string;          // BTC, ETH
     kind?: string;             // option, future, spot
   }) {
-    const response = await this.httpClient.get('/private/get_positions', { params });
+    const jsonRpcRequest = {
+      jsonrpc: "2.0",
+      id: Date.now(),
+      method: "private/get_positions",
+      params: params
+    };
+
+    const response = await this.httpClient.post('', jsonRpcRequest);
+
+    if (response.data.error) {
+      throw new Error(`Deribit API error: ${response.data.error.message} (code: ${response.data.error.code})`);
+    }
+
     return response.data.result;
   }
 
   /**
    * 获取未平仓订单
-   * GET /private/get_open_orders
+   * JSON-RPC: private/get_open_orders
    */
   async getOpenOrders(params?: {
     currency?: string;         // BTC, ETH
     kind?: string;             // option, future, spot
     type?: string;             // all, limit, stop_all, stop_limit, stop_market
   }) {
-    const response = await this.httpClient.get('/private/get_open_orders', { params });
+    const jsonRpcRequest = {
+      jsonrpc: "2.0",
+      id: Date.now(),
+      method: "private/get_open_orders",
+      params: params || {}
+    };
+
+    const response = await this.httpClient.post('', jsonRpcRequest);
+
+    if (response.data.error) {
+      throw new Error(`Deribit API error: ${response.data.error.message} (code: ${response.data.error.code})`);
+    }
+
     return response.data.result;
   }
 

@@ -271,7 +271,6 @@ app.post('/webhook/signal', async (req, res) => {
   const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   
   try {
-    // 🔴 DEBUG BREAKPOINT: 在这里设置断点 - Webhook信号接收
     console.log(`📡 [${requestId}] Received webhook signal:`, req.body);
     
     // 1. 验证请求体

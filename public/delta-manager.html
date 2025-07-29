@@ -472,6 +472,7 @@
                                     <th>状态</th>
                                     <th>订单ID</th>
                                     <th>合约名称</th>
+                                    <th>目标Delta</th>
                                     <th>TV_ID</th>
                                     <th>创建时间</th>
                                     <th>更新时间</th>
@@ -988,6 +989,7 @@
                     <td>${statusHtml}</td>
                     <td>${record.order_id || '-'}</td>
                     <td>${record.instrument_name}</td>
+                    <td class="${record.target_delta >= 0 ? 'delta-positive' : 'delta-negative'}">${record.target_delta.toFixed(4)}</td>
                     <td>${record.tv_id || '-'}</td>
                     <td>${new Date(record.created_at).toLocaleString()}</td>
                     <td>${new Date(record.updated_at).toLocaleString()}</td>
@@ -1002,7 +1004,7 @@
 
             if (orderRecords.length === 0) {
                 const row = document.createElement('tr');
-                row.innerHTML = '<td colspan="7" style="text-align: center; color: #7f8c8d;">暂无订单记录</td>';
+                row.innerHTML = '<td colspan="8" style="text-align: center; color: #7f8c8d;">暂无订单记录</td>';
                 tbody.appendChild(row);
             }
         }

@@ -37,6 +37,10 @@ coverage/
 *.swp
 *.swo
 
+# Database files
+data/*.db-wal
+data/*.db-shm
+
 # OS generated files
 .DS_Store
 .DS_Store?

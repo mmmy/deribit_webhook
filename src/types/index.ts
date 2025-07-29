@@ -75,7 +75,7 @@ export interface WebhookSignalPayload {
   qtyType: 'fixed' | 'percent' | 'contracts'; // 数量类型
   delta1?: number;                       // 期权Delta值，用于开仓时选择期权
   n?: number;                           // 最小到期天数，用于开仓时选择期权
-  // todo: 增加delta2参数, 当/webhook/signal接收到开仓信号后, 会向交易所提交一个订单,交易所返回成功后, 且该订单不是立即成交单(不是市价单),  那么把这个订单记录到delta数据库中, delta2参数就是target_delta
+  delta2?: number;                       // 目标Delta值，用于将非立即成交的开仓订单记录到delta数据库
 }
 
 // Webhook响应接口
@@ -99,6 +99,7 @@ export interface OptionTradingParams {
   orderType: 'market' | 'limit';         // 订单类型
   instrumentName?: string;               // Deribit期权合约名称
   qtyType?: 'fixed' | 'percent' | 'cash' | 'contracts'; // 数量类型
+  delta2?: number;                       // 目标Delta值，用于将非立即成交的开仓订单记录到delta数据库
 }
 
 // 期权交易结果接口

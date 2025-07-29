@@ -1,10 +1,12 @@
 import Decimal from 'decimal.js';
 import { ConfigLoader } from '../config';
+import { DeltaManager } from '../database/delta-manager';
+import { DeltaRecordType } from '../database/types';
 import {
-  DeribitOptionInstrument,
-  OptionTradingParams,
-  OptionTradingResult,
-  WebhookSignalPayload
+    DeribitOptionInstrument,
+    OptionTradingParams,
+    OptionTradingResult,
+    WebhookSignalPayload
 } from '../types';
 import { DeribitAuth } from './auth';
 import { DeribitClient } from './deribit-client';
@@ -15,12 +17,14 @@ export class OptionTradingService {
   private configLoader: ConfigLoader;
   private deribitClient: DeribitClient;
   private mockClient: MockDeribitClient;
+  private deltaManager: DeltaManager;
 
   constructor() {
     this.deribitAuth = new DeribitAuth();
     this.configLoader = ConfigLoader.getInstance();
     this.deribitClient = new DeribitClient();
     this.mockClient = new MockDeribitClient();
+    this.deltaManager = new DeltaManager();
   }
 
   /**
@@ -101,7 +105,8 @@ export class OptionTradingService {
       quantity,
       price,
       orderType: price ? 'limit' : 'market',
-      qtyType: payload.qtyType || 'contracts'
+      qtyType: payload.qtyType || 'contracts',
+      delta2: payload.delta2 // 传递目标Delta值
     };
   }
 
@@ -313,13 +318,27 @@ export class OptionTradingService {
       if (useMockMode) {
         // Mock模式：模拟下单
         console.log(`[MOCK] Placing ${params.direction} order for ${params.quantity} contracts of ${instrumentName}`);
-        
+
         // 模拟网络延迟
         await new Promise(resolve => setTimeout(resolve, 200));
-        
+
+        // 模拟订单结果（非立即成交）
+        const mockOrderResult = {
+          order: {
+            order_id: `mock_order_${Date.now()}`,
+            order_state: 'open', // 模拟非立即成交状态
+            filled_amount: 0,
+            average_price: 0
+          }
+        };
+
+        // 检查是否为非立即成交的开仓订单，如果是则记录到delta数据库
+        console.log(`🔍 Checking for delta2 parameter: ${params.delta2}`);
+        await this.handleNonImmediateOrder(mockOrderResult, params, instrumentName, params.quantity, params.price || 0.05);
+
         return {
           success: true,
-          orderId: `mock_order_${Date.now()}`,
+          orderId: mockOrderResult.order.order_id,
           message: `Successfully placed ${params.action} ${params.direction} order`,
           instrumentName,
           executedQuantity: params.quantity,
@@ -399,7 +418,10 @@ export class OptionTradingService {
         );
         
         console.log(`✅ Order placed successfully:`, orderResult);
-        
+
+        // 检查是否为非立即成交的开仓订单，如果是则记录到delta数据库
+        await this.handleNonImmediateOrder(orderResult, params, instrumentName, finalQuantity, finalPrice);
+
         return {
           success: true,
           orderId: orderResult.order?.order_id || `deribit_${Date.now()}`,
@@ -426,6 +448,52 @@ export class OptionTradingService {
         message: 'Failed to place option order',
         error: error instanceof Error ? error.message : 'Unknown error'
       };
+    }
+  }
+
+  /**
+   * 处理非立即成交的订单，将其记录到delta数据库
+   */
+  private async handleNonImmediateOrder(
+    orderResult: any,
+    params: OptionTradingParams,
+    instrumentName: string,
+    quantity: number,
+    price: number
+  ): Promise<void> {
+    try {
+      console.log(`🔍 handleNonImmediateOrder called with delta2: ${params.delta2}`);
+
+      // 检查是否为开仓订单且有delta2参数
+      const isOpeningOrder = params.action === 'open';
+      const hasTargetDelta = params.delta2 !== undefined;
+      const orderState = orderResult.order?.order_state;
+
+      console.log(`📊 Order checks: opening=${isOpeningOrder}, hasDelta2=${hasTargetDelta}, orderState=${orderState}`);
+
+      // 如果是开仓订单且有delta2参数，则记录到数据库
+      // 无论订单是否立即成交，都要记录目标Delta值
+      if (isOpeningOrder && hasTargetDelta) {
+        console.log(`📝 Recording opening order to delta database (state: ${orderState})`);
+
+        // 创建delta记录
+        // 如果订单立即成交，记录为仓位；否则记录为订单
+        const recordType = orderState === 'filled' ? DeltaRecordType.POSITION : DeltaRecordType.ORDER;
+        const deltaRecord = {
+          account_id: params.accountName,
+          instrument_name: instrumentName,
+          target_delta: params.delta2!,
+          order_id: recordType === DeltaRecordType.ORDER ? (orderResult.order?.order_id || '') : null,
+          tv_id: null, // 暂时设为null，后续可以从webhook payload中获取
+          record_type: recordType
+        };
+
+        this.deltaManager.createRecord(deltaRecord);
+        console.log(`✅ Delta record created as ${recordType} for ${orderResult.order?.order_id} with target delta ${params.delta2}`);
+      }
+    } catch (error) {
+      console.error('❌ Failed to handle non-immediate order:', error);
+      // 不抛出错误，避免影响主要的交易流程
     }
   }
 

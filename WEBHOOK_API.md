@@ -27,7 +27,7 @@ interface WebhookSignalPayload {
   id: string;                           // 策略订单ID
   alertMessage?: string;                 // 警报消息
   comment?: string;                      // 注释
-  qtyType: 'fixed' | 'percent' | 'contracts'; // 数量类型
+  qtyType: 'fixed' | 'cash'; // 数量类型
 }
 ```
 

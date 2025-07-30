@@ -105,7 +105,7 @@ export class OptionTradingService {
       quantity,
       price,
       orderType: price ? 'limit' : 'market',
-      qtyType: payload.qtyType || 'contracts',
+      qtyType: payload.qtyType || 'fixed',
       delta2: payload.delta2 // 传递目标Delta值
     };
   }

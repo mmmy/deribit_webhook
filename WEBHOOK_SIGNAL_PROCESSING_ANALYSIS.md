@@ -152,7 +152,22 @@ const orderResult = await this.deribitClient.placeOrder(
 );
 ```
 
-#### 4.3 HTTP请求格式
+#### 4.3 Delta记录逻辑
+开仓后自动记录Delta值到数据库：
+```typescript
+// delta1 -> move_position_delta 字段
+// delta2 -> target_delta 字段
+const deltaRecord = {
+  account_id: params.accountName,
+  instrument_name: instrumentName,
+  target_delta: params.delta2 || 0,        // delta2记录到target_delta
+  move_position_delta: params.delta1 || 0, // delta1记录到move_position_delta
+  order_id: recordType === DeltaRecordType.ORDER ? orderResult.order?.order_id : null,
+  record_type: orderState === 'filled' ? 'position' : 'order'
+};
+```
+
+### 4.4 HTTP请求格式
 ```typescript
 // Deribit API调用
 const endpoint = direction === 'buy' ? '/private/buy' : '/private/sell';
@@ -174,6 +189,8 @@ const response = await this.httpClient.post(`${baseUrl}${endpoint}`, orderParams
 ## 🔧 关键配置参数
 
 ### Webhook Payload示例
+
+**仅使用delta1 (记录到move_position_delta)**:
 ```json
 {
   "accountName": "yqtest",
@@ -182,6 +199,22 @@ const response = await this.httpClient.post(`${baseUrl}${endpoint}`, orderParams
   "size": "5000",
   "qtyType": "cash",
   "delta1": 0.7,
+  "n": 2,
+  "marketPosition": "long",
+  "prevMarketPosition": "flat"
+}
+```
+
+**同时使用delta1和delta2**:
+```json
+{
+  "accountName": "yqtest",
+  "side": "buy",
+  "symbol": "BTCUSDT",
+  "size": "5000",
+  "qtyType": "cash",
+  "delta1": 0.7,
+  "delta2": 0.25,
   "n": 2,
   "marketPosition": "long",
   "prevMarketPosition": "flat"
@@ -230,6 +263,12 @@ USE_TEST_ENVIRONMENT=false   # 是否使用测试环境
    - `qtyType = 'cash'` 表示$5000是美元金额
    - `orderQuantity = Math.floor(5000 / entryPrice)`
    - 例如: 期权价格0.05 BTC，则数量 = 5000/0.05 = 100,000合约
+
+4. **Delta记录**:
+   - `delta1 = 0.7` 记录到数据库的 `move_position_delta` 字段
+   - `delta2 = 0.25` 记录到数据库的 `target_delta` 字段
+   - 如果订单立即成交，记录类型为 `position`
+   - 如果订单未立即成交，记录类型为 `order`
 
 4. **下单执行**:
    - 调用Deribit `/private/buy` API

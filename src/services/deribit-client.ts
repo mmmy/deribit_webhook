@@ -1,10 +1,11 @@
+import { createAuthInfo, DeribitPrivateAPI, DeribitPublicAPI, getConfigByEnvironment } from "../api";
 import { ConfigLoader } from "../config";
 import type {
   DeltaFilterResult,
   DeribitOptionInstrument,
+  DeribitPosition,
   OptionDetails,
 } from "../types";
-import { DeribitPublicAPI, DeribitPrivateAPI, getConfigByEnvironment, createAuthInfo } from "../api";
 
 export class DeribitClient {
   private configLoader: ConfigLoader;
@@ -305,7 +306,7 @@ export class DeribitClient {
 
       // 初始化私有API
       this.initPrivateAPI(accessToken);
-      
+
       if (!this.privateAPI) {
         throw new Error('Failed to initialize private API');
       }
@@ -327,6 +328,178 @@ export class DeribitClient {
       }
     } catch (error) {
       console.error('Error placing order:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 下带标签的期权订单
+   */
+  async placeOrderWithLabel(
+    instrumentName: string,
+    direction: 'buy' | 'sell',
+    amount: number,
+    orderType: 'market' | 'limit' = 'market',
+    price?: number,
+    accessToken?: string,
+    label?: string
+  ): Promise<any> {
+    try {
+      if (!accessToken) {
+        throw new Error('Access token required for private API calls');
+      }
+
+      // 初始化私有API
+      this.initPrivateAPI(accessToken);
+
+      if (!this.privateAPI) {
+        throw new Error('Failed to initialize private API');
+      }
+
+      const orderParams: any = {
+        instrument_name: instrumentName,
+        amount: amount,
+        type: orderType,
+      };
+
+      if (orderType === 'limit' && price) {
+        orderParams.price = price;
+      }
+
+      if (label) {
+        orderParams.label = label;
+      }
+
+      if (direction === 'buy') {
+        return await this.privateAPI.buy(orderParams);
+      } else {
+        return await this.privateAPI.sell(orderParams);
+      }
+    } catch (error) {
+      console.error('Failed to place order with label:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 获取未平仓订单
+   */
+  async getOpenOrders(accessToken: string, params?: {
+    currency?: string;
+    kind?: string;
+    type?: string;
+  }): Promise<any[]> {
+    try {
+      this.initPrivateAPI(accessToken);
+
+      if (!this.privateAPI) {
+        throw new Error('Failed to initialize private API');
+      }
+
+      return await this.privateAPI.getOpenOrders(params);
+    } catch (error) {
+      console.error('Failed to get open orders:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 通过标签修改订单
+   */
+  async editOrderByLabel(
+    accessToken: string,
+    params: {
+      label: string;
+      instrument_name: string;
+      amount?: number;  // 可选参数，如果不传则只修改价格
+      price?: number;
+      post_only?: boolean;
+      advanced?: string;
+    }
+  ): Promise<any> {
+    try {
+      this.initPrivateAPI(accessToken);
+
+      if (!this.privateAPI) {
+        throw new Error('Failed to initialize private API');
+      }
+
+      return await this.privateAPI.editByLabel(params);
+    } catch (error) {
+      console.error('Failed to edit order by label:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 获取订单状态
+   */
+  async getOrderState(accessToken: string, orderId: string) {
+    try {
+      this.initPrivateAPI(accessToken);
+
+      if (!this.privateAPI) {
+        throw new Error('Failed to initialize private API');
+      }
+
+      return await this.privateAPI.getOrderState({ order_id: orderId });
+    } catch (error) {
+      console.error('Failed to get order state:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 编辑订单
+   */
+  async editOrder(accessToken: string, params: {
+    order_id: string;
+    amount: number;
+    price?: number;
+  }) {
+    try {
+      this.initPrivateAPI(accessToken);
+
+      if (!this.privateAPI) {
+        throw new Error('Failed to initialize private API');
+      }
+
+      return await this.privateAPI.edit(params);
+    } catch (error) {
+      console.error('Failed to edit order:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 获取仓位信息
+   * @returns 过滤掉size=0的有效仓位列表
+   */
+  async getPositions(accessToken: string, params?: {
+    currency?: string;
+    kind?: string;
+  }): Promise<DeribitPosition[]> {
+    try {
+      this.initPrivateAPI(accessToken);
+
+      if (!this.privateAPI) {
+        throw new Error('Failed to initialize private API');
+      }
+
+      // 默认参数
+      const requestParams = {
+        currency: params?.currency,
+        kind: params?.kind
+      };
+
+      // 调用实际的API获取仓位信息
+      const positions = await this.privateAPI.getPositions(requestParams);
+
+      console.log(`📊 Retrieved ${positions.length} active positions (size ≠ 0) for ${requestParams.currency}${requestParams.kind ? ` (${requestParams.kind})` : ''}`);
+
+      return positions;
+    } catch (error) {
+      console.error('Failed to get positions:', error);
       throw error;
     }
   }

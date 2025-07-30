@@ -490,12 +490,8 @@
                 <!-- 实际仓位 -->
                 <div class="section">
                     <div class="section-title">
-                        🏦 实际仓位 (未记录在数据库中)
+                        🏦 实际仓位 (所有品种期权)
                         <div style="float: right;">
-                            <select id="currencySelect" style="margin-right: 10px; padding: 8px;">
-                                <option value="BTC">BTC</option>
-                                <option value="ETH">ETH</option>
-                            </select>
                             <button class="btn btn-primary" data-action="refresh-live" id="refreshBtn">
                                 🔄 刷新
                             </button>
@@ -847,7 +843,7 @@
                 // 并行加载Delta记录和实时数据
                 const [deltaResponse, liveResponse] = await Promise.all([
                     fetch(`/api/delta/${currentAccount}`),
-                    fetch(`/api/delta/${currentAccount}/live-data?currency=BTC`)
+                    fetch(`/api/delta/${currentAccount}/live-data`)
                 ]);
 
                 if (!deltaResponse.ok) {
@@ -1350,8 +1346,6 @@
             }
 
             const refreshBtn = document.getElementById('refreshBtn');
-            const currencySelect = document.getElementById('currencySelect');
-            const selectedCurrency = currencySelect.value;
 
             // 显示加载状态
             refreshBtn.disabled = true;
@@ -1359,9 +1353,9 @@
             refreshBtn.style.opacity = '0.6';
 
             try {
-                console.log(`🔄 刷新${selectedCurrency}实时数据...`);
+                console.log(`🔄 刷新所有品种期权实时数据...`);
 
-                const response = await fetch(`/api/delta/${currentAccount}/live-data?currency=${selectedCurrency}`);
+                const response = await fetch(`/api/delta/${currentAccount}/live-data`);
                 const data = await response.json();
 
                 if (!data.success) {
@@ -1381,13 +1375,13 @@
                 const orderCount = liveOrders.length;
                 const mockMode = data.mockMode ? ' (Mock模式)' : '';
 
-                showSuccess(`${selectedCurrency}实时数据刷新成功${mockMode} - 仓位: ${positionCount}个, 订单: ${orderCount}个`);
+                showSuccess(`所有品种期权实时数据刷新成功${mockMode} - 仓位: ${positionCount}个, 订单: ${orderCount}个`);
 
 
 
             } catch (error) {
                 console.error('❌ 刷新失败:', error);
-                showError(`刷新${selectedCurrency}数据失败: ${error.message}`);
+                showError(`刷新数据失败: ${error.message}`);
             } finally {
                 // 恢复按钮状态
                 refreshBtn.disabled = false;

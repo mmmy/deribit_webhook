@@ -99,6 +99,7 @@ export interface OptionTradingParams {
   orderType: 'market' | 'limit';         // 订单类型
   instrumentName?: string;               // Deribit期权合约名称
   qtyType?: 'fixed' | 'cash'; // 数量类型
+  delta1?: number;                       // 期权Delta值，用于开仓时选择期权，同时记录到move_position_delta字段
   delta2?: number;                       // 目标Delta值，用于将非立即成交的开仓订单记录到delta数据库
 }
 
@@ -110,7 +111,52 @@ export interface OptionTradingResult {
   instrumentName?: string;
   executedQuantity?: number;
   executedPrice?: number;
+  orderLabel?: string;                   // 订单标签
+  finalOrderState?: string;              // 最终订单状态
+  positionInfo?: DetailedPositionInfo;   // 详细仓位信息
   error?: string;
+}
+
+// Deribit仓位信息接口
+export interface DeribitPosition {
+  instrument_name: string;           // 工具名称
+  size: number;                      // 仓位大小（正数为多头，负数为空头）
+  size_currency?: number;            // 以货币计价的仓位大小
+  direction: 'buy' | 'sell' | 'zero'; // 仓位方向
+  average_price: number;             // 平均开仓价格
+  average_price_usd?: number;        // 以USD计价的平均开仓价格
+  mark_price: number;                // 标记价格
+  index_price?: number;              // 指数价格
+  estimated_liquidation_price?: number; // 预估强平价格
+  unrealized_pnl: number;            // 未实现盈亏
+  realized_pnl?: number;             // 已实现盈亏
+  total_profit_loss: number;         // 总盈亏
+  maintenance_margin: number;        // 维持保证金
+  initial_margin: number;            // 初始保证金
+  settlement_price?: number;         // 结算价格
+  delta?: number;                    // Delta值（期权）
+  gamma?: number;                    // Gamma值（期权）
+  theta?: number;                    // Theta值（期权）
+  vega?: number;                     // Vega值（期权）
+  floating_profit_loss?: number;    // 浮动盈亏
+  floating_profit_loss_usd?: number; // 以USD计价的浮动盈亏
+  kind: 'option' | 'future' | 'spot'; // 工具类型
+  leverage?: number;                 // 杠杆倍数
+  open_orders_margin?: number;       // 未平仓订单保证金
+  interest_value?: number;           // 利息价值
+}
+
+// 前向声明，避免循环依赖
+export interface DetailedPositionInfo {
+  relatedOrders: any[];
+  totalOpenOrders: number;
+  positions: any[];
+  totalPositions: number;
+  executionStats: any;
+  summary: any;
+  metadata: any;
+  error?: string;
+  warnings?: string[];
 }
 
 // 期权列表查询参数接口

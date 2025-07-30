@@ -4,6 +4,7 @@
  */
 
 import axios, { AxiosInstance } from 'axios';
+import type { DeribitPosition } from '../types';
 
 // 配置接口
 interface DeribitConfig {
@@ -73,11 +74,12 @@ export class DeribitPrivateAPI {
   /**
    * 获取持仓列表
    * JSON-RPC: private/get_positions
+   * @returns 过滤掉size=0的有效仓位列表
    */
   async getPositions(params: {
-    currency: string;          // BTC, ETH
+    currency?: string;          // BTC, ETH
     kind?: string;             // option, future, spot
-  }) {
+  }): Promise<DeribitPosition[]> {
     const jsonRpcRequest = {
       jsonrpc: "2.0",
       id: Date.now(),
@@ -91,7 +93,14 @@ export class DeribitPrivateAPI {
       throw new Error(`Deribit API error: ${response.data.error.message} (code: ${response.data.error.code})`);
     }
 
-    return response.data.result;
+    const allPositions: DeribitPosition[] = response.data.result || [];
+
+    // 过滤掉size=0的仓位，只返回有实际持仓的记录
+    const activePositions = allPositions.filter(position => +position.size !== 0);
+
+    console.log(`📊 Positions filtered: ${allPositions.length} total → ${activePositions.length} active (size ≠ 0)`);
+
+    return activePositions;
   }
 
   /**
@@ -121,34 +130,57 @@ export class DeribitPrivateAPI {
 
   /**
    * 获取订单历史
-   * GET /private/get_order_history
+   * JSON-RPC: private/get_order_history
    */
-  async getOrderHistory(params: {
-    currency: string;          // BTC, ETH
+  async getOrderHistory(params?: {
+    currency?: string;         // BTC, ETH
     kind?: string;             // option, future, spot
-    count?: number;            // 返回数量，默认20
+    count?: number;            // 返回数量
     offset?: number;           // 偏移量
     include_old?: boolean;     // 是否包含旧订单
     include_unfilled?: boolean;// 是否包含未成交订单
   }) {
-    const response = await this.httpClient.get('/private/get_order_history', { params });
+    const jsonRpcRequest = {
+      jsonrpc: "2.0",
+      id: Date.now(),
+      method: "private/get_order_history",
+      params: params || {}
+    };
+
+    const response = await this.httpClient.post('', jsonRpcRequest);
+
+    if (response.data.error) {
+      throw new Error(`Deribit API error: ${response.data.error.message} (code: ${response.data.error.code})`);
+    }
+
     return response.data.result;
   }
 
   /**
-   * 获取交易历史
-   * GET /private/get_user_trades
+   * 获取用户交易历史
+   * JSON-RPC: private/get_user_trades
    */
-  async getUserTrades(params: {
-    currency: string;          // BTC, ETH
+  async getUserTrades(params?: {
+    currency?: string;         // BTC, ETH
     kind?: string;             // option, future, spot
-    start_timestamp?: number;  // 开始时间戳
-    end_timestamp?: number;    // 结束时间戳
-    count?: number;            // 返回数量，默认10
+    count?: number;            // 返回数量
+    offset?: number;           // 偏移量
     include_old?: boolean;     // 是否包含旧交易
     sorting?: 'asc' | 'desc';  // 排序方式
   }) {
-    const response = await this.httpClient.get('/private/get_user_trades', { params });
+    const jsonRpcRequest = {
+      jsonrpc: "2.0",
+      id: Date.now(),
+      method: "private/get_user_trades",
+      params: params || {}
+    };
+
+    const response = await this.httpClient.post('', jsonRpcRequest);
+
+    if (response.data.error) {
+      throw new Error(`Deribit API error: ${response.data.error.message} (code: ${response.data.error.code})`);
+    }
+
     return response.data.result;
   }
 
@@ -222,25 +254,49 @@ export class DeribitPrivateAPI {
 
   /**
    * 取消订单
-   * POST /private/cancel
+   * JSON-RPC: private/cancel
    */
   async cancel(params: {
     order_id: string;          // 订单ID
   }) {
-    const response = await this.httpClient.post('/private/cancel', params);
+    const jsonRpcRequest = {
+      jsonrpc: "2.0",
+      id: Date.now(),
+      method: "private/cancel",
+      params: params
+    };
+
+    const response = await this.httpClient.post('', jsonRpcRequest);
+
+    if (response.data.error) {
+      throw new Error(`Deribit API error: ${response.data.error.message} (code: ${response.data.error.code})`);
+    }
+
     return response.data.result;
   }
 
   /**
    * 取消所有订单
-   * POST /private/cancel_all
+   * JSON-RPC: private/cancel_all
    */
   async cancelAll(params?: {
     currency?: string;         // BTC, ETH
     kind?: string;             // option, future, spot
     type?: string;             // all, limit, stop_all, stop_limit, stop_market
   }) {
-    const response = await this.httpClient.post('/private/cancel_all', params);
+    const jsonRpcRequest = {
+      jsonrpc: "2.0",
+      id: Date.now(),
+      method: "private/cancel_all",
+      params: params || {}
+    };
+
+    const response = await this.httpClient.post('', jsonRpcRequest);
+
+    if (response.data.error) {
+      throw new Error(`Deribit API error: ${response.data.error.message} (code: ${response.data.error.code})`);
+    }
+
     return response.data.result;
   }
 
@@ -255,59 +311,218 @@ export class DeribitPrivateAPI {
     post_only?: boolean;       // 只做maker
     advanced?: string;         // 高级选项
   }) {
-    const response = await this.httpClient.post('/private/edit', params);
-    return response.data.result;
+    const jsonRpcRequest = {
+      jsonrpc: "2.0",
+      id: Date.now(),
+      method: "private/edit",
+      params: params
+    };
+
+    try {
+      const response = await this.httpClient.post('', jsonRpcRequest);
+
+      if (response.data.error) {
+        console.error('Deribit API error details:', response.data.error);
+        throw new Error(`Deribit API error: ${response.data.error.message} (code: ${response.data.error.code})`);
+      }
+
+      return response.data.result;
+    } catch (error) {
+      // 如果是HTTP错误，尝试解析响应中的错误信息
+      if (error instanceof Error && 'response' in error) {
+        const axiosError = error as any;
+        if (axiosError.response && axiosError.response.data) {
+          console.error('Full response data:', axiosError.response.data);
+          if (axiosError.response.data.error) {
+            console.error('Deribit API error details:', axiosError.response.data.error);
+            throw new Error(`Deribit API error: ${axiosError.response.data.error.message} (code: ${axiosError.response.data.error.code})`);
+          }
+        }
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * 通过标签修改订单
+   * JSON-RPC: private/edit_by_label
+   */
+  async editByLabel(params: {
+    label: string;             // 订单标签
+    instrument_name: string;   // 工具名称
+    amount?: number;           // 新数量（可选，如果不传则只修改价格）
+    price?: number;            // 新价格
+    post_only?: boolean;       // 只做maker
+    advanced?: string;         // 高级选项
+  }) {
+    // 验证必需参数
+    if (!params.label || !params.instrument_name) {
+      throw new Error('label and instrument_name are required parameters');
+    }
+
+    // 验证至少有一个修改参数
+    if (params.amount === undefined && params.price === undefined) {
+      throw new Error('At least one of amount or price must be provided');
+    }
+
+    console.log(`🔧 Editing order by label:`, {
+      label: params.label,
+      instrument_name: params.instrument_name,
+      amount: params.amount,
+      price: params.price,
+      post_only: params.post_only
+    });
+
+    const jsonRpcRequest = {
+      jsonrpc: "2.0",
+      id: Date.now(),
+      method: "private/edit_by_label",
+      params: params
+    };
+
+    try {
+      const response = await this.httpClient.post('', jsonRpcRequest);
+
+      if (response.data.error) {
+        console.error(`❌ Deribit API error for edit_by_label:`, {
+          error: response.data.error,
+          request_params: params
+        });
+        throw new Error(`Deribit API error: ${response.data.error.message} (code: ${response.data.error.code})`);
+      }
+
+      console.log(`✅ Order edited successfully:`, response.data.result);
+      return response.data.result;
+    } catch (error) {
+      console.error(`❌ HTTP request failed for edit_by_label:`, {
+        error: error instanceof Error ? error.message : String(error),
+        request_params: params
+      });
+      throw error;
+    }
   }
 
   /**
    * 获取订单状态
-   * GET /private/get_order_state
+   * JSON-RPC: private/get_order_state
    */
   async getOrderState(params: {
     order_id: string;          // 订单ID
   }) {
-    const response = await this.httpClient.get('/private/get_order_state', { params });
+    const jsonRpcRequest = {
+      jsonrpc: "2.0",
+      id: Date.now(),
+      method: "private/get_order_state",
+      params: params
+    };
+
+    const response = await this.httpClient.post('', jsonRpcRequest);
+
+    if (response.data.error) {
+      throw new Error(`Deribit API error: ${response.data.error.message} (code: ${response.data.error.code})`);
+    }
+
+    return response.data.result;
+  }
+
+  /**
+   * 通过标签获取订单状态
+   * JSON-RPC: private/get_order_state_by_label
+   */
+  async getOrderStateByLabel(params: {
+    label: string;             // 订单标签
+    instrument_name: string;   // 工具名称
+  }) {
+    const jsonRpcRequest = {
+      jsonrpc: "2.0",
+      id: Date.now(),
+      method: "private/get_order_state_by_label",
+      params: params
+    };
+
+    const response = await this.httpClient.post('', jsonRpcRequest);
+
+    if (response.data.error) {
+      throw new Error(`Deribit API error: ${response.data.error.message} (code: ${response.data.error.code})`);
+    }
+
     return response.data.result;
   }
 
   /**
    * 获取子账户列表
-   * GET /private/get_subaccounts
+   * JSON-RPC: private/get_subaccounts
    */
   async getSubaccounts(params?: {
     with_portfolio?: boolean;  // 是否包含组合信息
   }) {
-    const response = await this.httpClient.get('/private/get_subaccounts', { params });
+    const jsonRpcRequest = {
+      jsonrpc: "2.0",
+      id: Date.now(),
+      method: "private/get_subaccounts",
+      params: params || {}
+    };
+
+    const response = await this.httpClient.post('', jsonRpcRequest);
+
+    if (response.data.error) {
+      throw new Error(`Deribit API error: ${response.data.error.message} (code: ${response.data.error.code})`);
+    }
+
     return response.data.result;
   }
 
   /**
    * 获取保证金信息
-   * GET /private/get_margins
+   * JSON-RPC: private/get_margins
    */
   async getMargins(params: {
     instrument_name: string;   // 期权合约名称
     amount: number;            // 数量
     price: number;             // 价格
   }) {
-    const response = await this.httpClient.get('/private/get_margins', { params });
+    const jsonRpcRequest = {
+      jsonrpc: "2.0",
+      id: Date.now(),
+      method: "private/get_margins",
+      params: params
+    };
+
+    const response = await this.httpClient.post('', jsonRpcRequest);
+
+    if (response.data.error) {
+      throw new Error(`Deribit API error: ${response.data.error.message} (code: ${response.data.error.code})`);
+    }
+
     return response.data.result;
   }
 
   /**
    * 获取存款地址
-   * GET /private/get_current_deposit_address
+   * JSON-RPC: private/get_current_deposit_address
    */
   async getCurrentDepositAddress(params: {
     currency: string;          // BTC, ETH
   }) {
-    const response = await this.httpClient.get('/private/get_current_deposit_address', { params });
+    const jsonRpcRequest = {
+      jsonrpc: "2.0",
+      id: Date.now(),
+      method: "private/get_current_deposit_address",
+      params: params
+    };
+
+    const response = await this.httpClient.post('', jsonRpcRequest);
+
+    if (response.data.error) {
+      throw new Error(`Deribit API error: ${response.data.error.message} (code: ${response.data.error.code})`);
+    }
+
     return response.data.result;
   }
 
   /**
    * 提取资金
-   * POST /private/withdraw
+   * JSON-RPC: private/withdraw
    */
   async withdraw(params: {
     currency: string;          // BTC, ETH
@@ -316,33 +531,69 @@ export class DeribitPrivateAPI {
     priority?: 'insane' | 'extreme_high' | 'very_high' | 'high' | 'mid' | 'low' | 'very_low';
     tfa?: string;              // 2FA代码
   }) {
-    const response = await this.httpClient.post('/private/withdraw', params);
+    const jsonRpcRequest = {
+      jsonrpc: "2.0",
+      id: Date.now(),
+      method: "private/withdraw",
+      params: params
+    };
+
+    const response = await this.httpClient.post('', jsonRpcRequest);
+
+    if (response.data.error) {
+      throw new Error(`Deribit API error: ${response.data.error.message} (code: ${response.data.error.code})`);
+    }
+
     return response.data.result;
   }
 
   /**
    * 获取提取历史
-   * GET /private/get_withdrawals
+   * JSON-RPC: private/get_withdrawals
    */
   async getWithdrawals(params: {
     currency: string;          // BTC, ETH
     count?: number;            // 返回数量
     offset?: number;           // 偏移量
   }) {
-    const response = await this.httpClient.get('/private/get_withdrawals', { params });
+    const jsonRpcRequest = {
+      jsonrpc: "2.0",
+      id: Date.now(),
+      method: "private/get_withdrawals",
+      params: params || {}
+    };
+
+    const response = await this.httpClient.post('', jsonRpcRequest);
+
+    if (response.data.error) {
+      throw new Error(`Deribit API error: ${response.data.error.message} (code: ${response.data.error.code})`);
+    }
+
     return response.data.result;
   }
 
   /**
    * 获取存款历史
-   * GET /private/get_deposits
+   * JSON-RPC: private/get_deposits
    */
   async getDeposits(params: {
     currency: string;          // BTC, ETH
     count?: number;            // 返回数量
     offset?: number;           // 偏移量
   }) {
-    const response = await this.httpClient.get('/private/get_deposits', { params });
+    const jsonRpcRequest = {
+      jsonrpc: "2.0",
+      id: Date.now(),
+      method: "private/get_deposits",
+      params: params || {}
+    };
+
+    const response = await this.httpClient.post('', jsonRpcRequest);
+
+    if (response.data.error) {
+      throw new Error(`Deribit API error: ${response.data.error.message} (code: ${response.data.error.code})`);
+    }
+
     return response.data.result;
   }
 }

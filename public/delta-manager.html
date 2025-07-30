@@ -449,6 +449,7 @@
                                     <th>状态</th>
                                     <th>合约名称</th>
                                     <th>目标Delta</th>
+                                    <th>移仓Delta</th>
                                     <th>TV_ID</th>
                                     <th>创建时间</th>
                                     <th>更新时间</th>
@@ -473,6 +474,7 @@
                                     <th>订单ID</th>
                                     <th>合约名称</th>
                                     <th>目标Delta</th>
+                                    <th>移仓Delta</th>
                                     <th>TV_ID</th>
                                     <th>创建时间</th>
                                     <th>更新时间</th>
@@ -508,6 +510,7 @@
                                     <th>平均价格</th>
                                     <th>标记价格</th>
                                     <th>Delta值</th>
+                                    <th>Delta平均值</th>
                                     <th>操作</th>
                                 </tr>
                             </thead>
@@ -594,6 +597,11 @@
                     <input type="number" id="quickTargetDeltaValue" step="0.0001" min="-1" max="1" placeholder="请输入目标Delta值 (-1到1之间)" required>
                     <small style="color: #666; font-size: 12px;">仓位和订单都需要设置目标Delta值</small>
                 </div>
+                <div class="form-group" id="quickMovePositionDeltaGroup">
+                    <label for="quickMovePositionDeltaValue">移仓Delta值 <span style="color: red;">*</span>:</label>
+                    <input type="number" id="quickMovePositionDeltaValue" step="0.0001" min="-1" max="1" placeholder="请输入移仓Delta值 (-1到1之间)" required>
+                    <small style="color: #666; font-size: 12px;">仓位和订单都需要设置移仓Delta值</small>
+                </div>
                 <div class="form-group">
                     <label for="quickTvId">TV_ID (可留空):</label>
                     <input type="number" id="quickTvId" placeholder="可选的TradingView信号ID">
@@ -623,6 +631,10 @@
                 <div class="form-group" id="editTargetDeltaGroup">
                     <label for="editTargetDeltaValue">目标Delta值:</label>
                     <input type="number" id="editTargetDeltaValue" step="0.0001" min="-1" max="1" required>
+                </div>
+                <div class="form-group" id="editMovePositionDeltaGroup">
+                    <label for="editMovePositionDeltaValue">移仓Delta值:</label>
+                    <input type="number" id="editMovePositionDeltaValue" step="0.0001" min="-1" max="1" required>
                 </div>
                 <div class="form-group">
                     <label for="editTvId">TV_ID (可留空):</label>
@@ -934,10 +946,25 @@
                     statusHtml = '<span class="status-unknown">❓ 未验证</span>';
                 }
 
+                // 计算Delta平均值：从实时仓位数据中查找对应的仓位
+                let deltaAverageHtml = '-';
+                const livePosition = livePositions.find(pos => pos.instrument_name === record.instrument_name);
+                if (livePosition) {
+                    const size = livePosition.size || livePosition.amount || 0;
+                    const delta = livePosition.delta || 0;
+
+                    if (size !== 0) {
+                        const deltaAverage = delta / Math.abs(size);
+                        const deltaClass = deltaAverage >= 0 ? 'delta-positive' : 'delta-negative';
+                        deltaAverageHtml = `<span class="${deltaClass}">${deltaAverage.toFixed(4)}</span>`;
+                    }
+                }
+
                 row.innerHTML = `
                     <td>${statusHtml}</td>
                     <td>${record.instrument_name}</td>
                     <td class="${record.target_delta >= 0 ? 'delta-positive' : 'delta-negative'}">${record.target_delta.toFixed(4)}</td>
+                    <td class="${(record.move_position_delta || 0) >= 0 ? 'delta-positive' : 'delta-negative'}">${(record.move_position_delta || 0).toFixed(4)}</td>
                     <td>${record.tv_id || '-'}</td>
                     <td>${new Date(record.created_at).toLocaleString()}</td>
                     <td>${new Date(record.updated_at).toLocaleString()}</td>
@@ -952,7 +979,7 @@
 
             if (positionRecords.length === 0) {
                 const row = document.createElement('tr');
-                row.innerHTML = '<td colspan="7" style="text-align: center; color: #7f8c8d;">暂无仓位记录</td>';
+                row.innerHTML = '<td colspan="8" style="text-align: center; color: #7f8c8d;">暂无仓位记录</td>';
                 tbody.appendChild(row);
             }
         }
@@ -990,6 +1017,7 @@
                     <td>${record.order_id || '-'}</td>
                     <td>${record.instrument_name}</td>
                     <td class="${record.target_delta >= 0 ? 'delta-positive' : 'delta-negative'}">${record.target_delta.toFixed(4)}</td>
+                    <td class="${(record.move_position_delta || 0) >= 0 ? 'delta-positive' : 'delta-negative'}">${(record.move_position_delta || 0).toFixed(4)}</td>
                     <td>${record.tv_id || '-'}</td>
                     <td>${new Date(record.created_at).toLocaleString()}</td>
                     <td>${new Date(record.updated_at).toLocaleString()}</td>
@@ -1004,7 +1032,7 @@
 
             if (orderRecords.length === 0) {
                 const row = document.createElement('tr');
-                row.innerHTML = '<td colspan="8" style="text-align: center; color: #7f8c8d;">暂无订单记录</td>';
+                row.innerHTML = '<td colspan="9" style="text-align: center; color: #7f8c8d;">暂无订单记录</td>';
                 tbody.appendChild(row);
             }
         }
@@ -1031,6 +1059,12 @@
                 const markPrice = position.mark_price || 0;
                 const delta = position.delta || 0;
 
+                // 计算Delta平均值：仓位的delta / 仓位数量
+                let deltaAverage = 0;
+                if (size !== 0) {
+                    deltaAverage = delta / Math.abs(size);
+                }
+
                 row.innerHTML = `
                     <td>${position.instrument_name}</td>
                     <td>${size}</td>
@@ -1038,6 +1072,7 @@
                     <td>${typeof avgPrice === 'number' ? avgPrice.toFixed(5) : avgPrice}</td>
                     <td>${typeof markPrice === 'number' ? markPrice.toFixed(5) : markPrice}</td>
                     <td class="${delta >= 0 ? 'delta-positive' : 'delta-negative'}">${typeof delta === 'number' ? delta.toFixed(4) : delta}</td>
+                    <td class="${deltaAverage >= 0 ? 'delta-positive' : 'delta-negative'}">${deltaAverage.toFixed(4)}</td>
                     <td>
                         <button class="btn btn-success" data-action="add-position" data-instrument="${position.instrument_name}">
                             ➕ 添加到数据库
@@ -1049,7 +1084,7 @@
 
             if (unrecordedPositions.length === 0) {
                 const row = document.createElement('tr');
-                row.innerHTML = '<td colspan="7" style="text-align: center; color: #7f8c8d;">所有仓位都已记录在数据库中</td>';
+                row.innerHTML = '<td colspan="8" style="text-align: center; color: #7f8c8d;">所有仓位都已记录在数据库中</td>';
                 tbody.appendChild(row);
             }
         }
@@ -1179,6 +1214,7 @@
             const confirmMessage = `确定要删除这条记录吗？\n\n` +
                 `合约: ${record.instrument_name}\n` +
                 `目标Delta: ${record.target_delta}\n` +
+                `移仓Delta: ${record.move_position_delta || 0}\n` +
                 `类型: ${record.record_type === 'position' ? '仓位' : '订单'}\n` +
                 `TV_ID: ${record.tv_id}\n` +
                 `创建时间: ${new Date(record.created_at).toLocaleString()}`;
@@ -1219,6 +1255,7 @@
             message += `合约: ${record.instrument_name}\n`;
             message += `类型: ${record.record_type === 'position' ? '仓位' : '订单'}\n`;
             message += `目标Delta: ${record.target_delta}\n`;
+            message += `移仓Delta: ${record.move_position_delta || 0}\n`;
             message += `TV_ID: ${record.tv_id || '无'}\n`;
             message += `创建时间: ${new Date(record.created_at).toLocaleString()}\n\n`;
 
@@ -1431,26 +1468,34 @@
             try {
                 document.getElementById('quickInstrumentName').value = instrumentName;
                 document.getElementById('quickTargetDeltaValue').value = '';
+                document.getElementById('quickMovePositionDeltaValue').value = '';
                 document.getElementById('quickTvId').value = '';
 
                 const quickTargetDeltaGroup = document.getElementById('quickTargetDeltaGroup');
+                const quickMovePositionDeltaGroup = document.getElementById('quickMovePositionDeltaGroup');
                 const quickOrderIdGroup = document.getElementById('quickOrderIdGroup');
                 const quickTargetDeltaInput = document.getElementById('quickTargetDeltaValue');
+                const quickMovePositionDeltaInput = document.getElementById('quickMovePositionDeltaValue');
 
                 if (recordType === 'order' && orderId) {
-                    // 订单记录：显示订单ID和目标Delta字段
+                    // 订单记录：显示订单ID和目标Delta字段和移仓Delta字段
                     document.getElementById('quickOrderId').value = orderId;
                     quickOrderIdGroup.style.display = 'block';
                     quickTargetDeltaGroup.style.display = 'block';
+                    quickMovePositionDeltaGroup.style.display = 'block';
                     quickTargetDeltaInput.value = ''; // 订单目标Delta也需要用户输入
+                    quickMovePositionDeltaInput.value = ''; // 订单移仓Delta也需要用户输入
                     quickTargetDeltaInput.required = true;
+                    quickMovePositionDeltaInput.required = true;
 
                     document.getElementById('quickAddTitle').textContent = '添加订单到数据库';
                 } else {
-                    // 仓位记录：隐藏订单ID，显示目标Delta字段
+                    // 仓位记录：隐藏订单ID，显示目标Delta字段和移仓Delta字段
                     quickOrderIdGroup.style.display = 'none';
                     quickTargetDeltaGroup.style.display = 'block';
+                    quickMovePositionDeltaGroup.style.display = 'block';
                     quickTargetDeltaInput.required = true;
+                    quickMovePositionDeltaInput.required = true;
 
                     document.getElementById('quickAddTitle').textContent = '添加仓位到数据库';
                 }
@@ -1484,11 +1529,18 @@
             if (!window.currentQuickAdd) return;
 
             const targetDeltaInput = document.getElementById('quickTargetDeltaValue').value;
+            const movePositionDeltaInput = document.getElementById('quickMovePositionDeltaValue').value;
             const tvIdInput = document.getElementById('quickTvId').value;
 
             // 验证所有记录都必须有target_delta值
             if (!targetDeltaInput.trim()) {
                 showError('必须输入目标Delta值');
+                return;
+            }
+
+            // 验证所有记录都必须有move_position_delta值
+            if (!movePositionDeltaInput.trim()) {
+                showError('必须输入移仓Delta值');
                 return;
             }
 
@@ -1498,11 +1550,18 @@
                 return;
             }
 
+            const movePositionDeltaValue = parseFloat(movePositionDeltaInput);
+            if (isNaN(movePositionDeltaValue) || movePositionDeltaValue < -1 || movePositionDeltaValue > 1) {
+                showError('移仓Delta值必须在-1到1之间');
+                return;
+            }
+
             const tvId = tvIdInput.trim() ? parseInt(tvIdInput) : null;
 
             const formData = {
                 instrument_name: window.currentQuickAdd.instrumentName,
-                delta: targetDeltaValue, // API仍然使用delta字段名
+                target_delta: targetDeltaValue,
+                move_position_delta: movePositionDeltaValue,
                 tv_id: tvId,
                 record_type: window.currentQuickAdd.recordType
             };
@@ -1524,8 +1583,9 @@
                     throw new Error(result.message);
                 }
 
+                const recordTypeText = window.currentQuickAdd.recordType === 'position' ? '仓位' : '订单';
                 closeQuickAddModal();
-                showSuccess(`${window.currentQuickAdd.recordType === 'position' ? '仓位' : '订单'}已添加到数据库 (目标Delta: ${targetDeltaValue}, TV_ID: ${tvId})`);
+                showSuccess(`${recordTypeText}已添加到数据库 (目标Delta: ${targetDeltaValue}, 移仓Delta: ${movePositionDeltaValue}, TV_ID: ${tvId})`);
                 loadData();
 
             } catch (error) {
@@ -1544,20 +1604,24 @@
             // 填充编辑表单
             document.getElementById('editInstrumentName').value = record.instrument_name;
             document.getElementById('editTargetDeltaValue').value = record.target_delta;
+            document.getElementById('editMovePositionDeltaValue').value = record.move_position_delta || 0;
             document.getElementById('editTvId').value = record.tv_id || '';
 
             // 根据记录类型显示/隐藏字段
             const editTargetDeltaGroup = document.getElementById('editTargetDeltaGroup');
+            const editMovePositionDeltaGroup = document.getElementById('editMovePositionDeltaGroup');
             const editOrderIdGroup = document.getElementById('editOrderIdGroup');
 
             if (record.record_type === 'order') {
-                // 订单记录：显示目标Delta字段和订单ID
+                // 订单记录：显示目标Delta字段、移仓Delta字段和订单ID
                 editTargetDeltaGroup.style.display = 'block';
+                editMovePositionDeltaGroup.style.display = 'block';
                 editOrderIdGroup.style.display = 'block';
                 document.getElementById('editOrderId').value = record.order_id || '';
             } else {
-                // 仓位记录：显示目标Delta字段，隐藏订单ID
+                // 仓位记录：显示目标Delta字段、移仓Delta字段，隐藏订单ID
                 editTargetDeltaGroup.style.display = 'block';
+                editMovePositionDeltaGroup.style.display = 'block';
                 editOrderIdGroup.style.display = 'none';
             }
 
@@ -1581,12 +1645,14 @@
             if (!window.currentEditingRecord) return;
 
             const targetDeltaValue = parseFloat(document.getElementById('editTargetDeltaValue').value);
+            const movePositionDeltaValue = parseFloat(document.getElementById('editMovePositionDeltaValue').value);
             const tvIdInput = document.getElementById('editTvId').value.trim();
             const tvId = tvIdInput ? parseInt(tvIdInput) : null;
 
             const updateData = {
                 tv_id: tvId,
-                target_delta: targetDeltaValue  // 仓位和订单都可以更新目标Delta
+                target_delta: targetDeltaValue,  // 仓位和订单都可以更新目标Delta
+                move_position_delta: movePositionDeltaValue  // 仓位和订单都可以更新移仓Delta
             };
 
             try {

@@ -483,6 +483,7 @@ export class OptionTradingService {
           account_id: params.accountName,
           instrument_name: instrumentName,
           target_delta: params.delta2!,
+          move_position_delta: 0, // 默认为0，可以根据需要调整
           order_id: recordType === DeltaRecordType.ORDER ? (orderResult.order?.order_id || '') : null,
           tv_id: null, // 暂时设为null，后续可以从webhook payload中获取
           record_type: recordType

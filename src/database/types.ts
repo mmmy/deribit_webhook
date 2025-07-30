@@ -15,6 +15,7 @@ export interface DeltaRecord {
   instrument_name: string;        // 合约名称 (如: BTC-8AUG25-113000-C)
   order_id?: string;              // 订单ID (仓位时为null)
   target_delta: number;           // 目标Delta值 (-1 到 1)
+  move_position_delta: number;    // 移仓Delta值 (-1 到 1)
   tv_id: number | null;           // TradingView信号ID (可选)
   record_type: DeltaRecordType;   // 记录类型
   created_at?: string;            // 创建时间
@@ -27,6 +28,7 @@ export interface CreateDeltaRecordInput {
   instrument_name: string;
   order_id?: string;
   target_delta: number;
+  move_position_delta: number;
   tv_id: number | null;
   record_type: DeltaRecordType;
 }
@@ -34,6 +36,7 @@ export interface CreateDeltaRecordInput {
 // 更新Delta记录的输入参数
 export interface UpdateDeltaRecordInput {
   target_delta?: number;
+  move_position_delta?: number;
   order_id?: string;
   tv_id?: number | null;
 }

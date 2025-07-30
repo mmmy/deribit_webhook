@@ -60,6 +60,7 @@ export class DeltaManager {
     const hasTV_ID = tableInfo.some((col: any) => col.name === 'tv_id');
     const hasTargetDelta = tableInfo.some((col: any) => col.name === 'target_delta');
     const hasDelta = tableInfo.some((col: any) => col.name === 'delta');
+    const hasMovePositionDelta = tableInfo.some((col: any) => col.name === 'move_position_delta');
 
     // 迁移1: 添加tv_id列
     if (!hasTV_ID && tableInfo.length > 0) {
@@ -105,6 +106,20 @@ export class DeltaManager {
 
       } catch (error) {
         console.error('❌ tv_id字段迁移失败:', error);
+        throw error;
+      }
+    }
+
+    // 迁移4: 添加move_position_delta字段
+    if (!hasMovePositionDelta && tableInfo.length > 0) {
+      console.log('🔄 检测到需要添加move_position_delta字段，执行迁移...');
+
+      try {
+        this.rebuildTableWithMovePositionDelta();
+        console.log('✅ 已添加move_position_delta字段');
+
+      } catch (error) {
+        console.error('❌ 添加move_position_delta字段失败:', error);
         throw error;
       }
     }
@@ -225,6 +240,45 @@ export class DeltaManager {
   }
 
   /**
+   * 重建表以添加move_position_delta字段
+   */
+  private rebuildTableWithMovePositionDelta(): void {
+    const transaction = this.db.transaction(() => {
+      // 创建新表
+      this.db.exec(`
+        CREATE TABLE delta_records_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          account_id TEXT NOT NULL,
+          instrument_name TEXT NOT NULL,
+          order_id TEXT,
+          target_delta REAL NOT NULL CHECK (target_delta >= -1 AND target_delta <= 1),
+          move_position_delta REAL NOT NULL DEFAULT 0 CHECK (move_position_delta >= -1 AND move_position_delta <= 1),
+          tv_id INTEGER,
+          record_type TEXT NOT NULL CHECK (record_type IN ('position', 'order')),
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
+      // 复制数据，为move_position_delta设置默认值0
+      this.db.exec(`
+        INSERT INTO delta_records_new (id, account_id, instrument_name, order_id, target_delta, move_position_delta, tv_id, record_type, created_at, updated_at)
+        SELECT id, account_id, instrument_name, order_id, target_delta, 0, tv_id, record_type, created_at, updated_at
+        FROM delta_records
+      `);
+
+      // 删除旧表
+      this.db.exec('DROP TABLE delta_records');
+
+      // 重命名新表
+      this.db.exec('ALTER TABLE delta_records_new RENAME TO delta_records');
+    });
+
+    transaction();
+    console.log('✅ move_position_delta字段已添加');
+  }
+
+  /**
    * 初始化数据库表
    */
   private initializeTables(): void {
@@ -237,6 +291,7 @@ export class DeltaManager {
         instrument_name TEXT NOT NULL,
         order_id TEXT,
         target_delta REAL NOT NULL CHECK (target_delta >= -1 AND target_delta <= 1),
+        move_position_delta REAL NOT NULL DEFAULT 0 CHECK (move_position_delta >= -1 AND move_position_delta <= 1),
         tv_id INTEGER,
         record_type TEXT NOT NULL CHECK (record_type IN ('position', 'order')),
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -282,8 +337,8 @@ export class DeltaManager {
    */
   public createRecord(input: CreateDeltaRecordInput): DeltaRecord {
     const insertSQL = `
-      INSERT INTO delta_records (account_id, instrument_name, order_id, target_delta, tv_id, record_type)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO delta_records (account_id, instrument_name, order_id, target_delta, move_position_delta, tv_id, record_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `;
 
     try {
@@ -293,6 +348,7 @@ export class DeltaManager {
         input.instrument_name,
         input.order_id || null,
         input.target_delta,
+        input.move_position_delta,
         input.tv_id,
         input.record_type
       );
@@ -371,6 +427,11 @@ export class DeltaManager {
     if (input.target_delta !== undefined) {
       fields.push('target_delta = ?');
       params.push(input.target_delta);
+    }
+
+    if (input.move_position_delta !== undefined) {
+      fields.push('move_position_delta = ?');
+      params.push(input.move_position_delta);
     }
 
     if (input.order_id !== undefined) {
@@ -571,7 +632,10 @@ export class DeltaManager {
 
       if (existing) {
         // 更新现有记录
-        const updated = this.updateRecord(existing.id!, { target_delta: input.target_delta });
+        const updated = this.updateRecord(existing.id!, { 
+          target_delta: input.target_delta,
+          move_position_delta: input.move_position_delta
+        });
         if (!updated) {
           throw new Error('更新现有仓位记录失败');
         }

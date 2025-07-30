@@ -638,13 +638,17 @@ app.get('/api/delta/:accountId/live-data', async (req, res) => {
 app.post('/api/delta/:accountId', async (req, res) => {
   try {
     const { accountId } = req.params;
-    const { instrument_name, delta, tv_id, record_type, order_id } = req.body;
+    const { instrument_name, delta, target_delta, move_position_delta, tv_id, record_type, order_id } = req.body;
+
+    // 为了向后兼容，如果只提供了delta字段，将其作为target_delta使用
+    const finalTargetDelta = target_delta !== undefined ? target_delta : delta;
+    const finalMovePositionDelta = move_position_delta !== undefined ? move_position_delta : 0;
 
     // 验证必需字段 (tv_id现在是可选的)
-    if (!instrument_name || delta === undefined || !record_type) {
+    if (!instrument_name || finalTargetDelta === undefined || !record_type) {
       return res.status(400).json({
         success: false,
-        message: 'Missing required fields: instrument_name, delta, record_type'
+        message: 'Missing required fields: instrument_name, target_delta (or delta), record_type'
       });
     }
 
@@ -661,7 +665,8 @@ app.post('/api/delta/:accountId', async (req, res) => {
     const recordInput: CreateDeltaRecordInput = {
       account_id: accountId,
       instrument_name,
-      target_delta: parseFloat(delta),
+      target_delta: parseFloat(finalTargetDelta),
+      move_position_delta: parseFloat(finalMovePositionDelta),
       tv_id: tv_id ? parseInt(tv_id) : null,
       record_type: record_type as DeltaRecordType,
       order_id: order_id || undefined
@@ -687,7 +692,7 @@ app.post('/api/delta/:accountId', async (req, res) => {
 app.put('/api/delta/:accountId/:recordId', async (req, res) => {
   try {
     const { accountId, recordId } = req.params;
-    const { target_delta, tv_id, order_id } = req.body;
+    const { target_delta, move_position_delta, tv_id, order_id } = req.body;
 
     // 验证账户是否存在
     const account = configLoader.getAccountByName(accountId);
@@ -710,6 +715,7 @@ app.put('/api/delta/:accountId/:recordId', async (req, res) => {
     // 更新记录
     const updateData: any = {};
     if (target_delta !== undefined) updateData.target_delta = parseFloat(target_delta);
+    if (move_position_delta !== undefined) updateData.move_position_delta = parseFloat(move_position_delta);
     if (tv_id !== undefined) updateData.tv_id = tv_id ? parseInt(tv_id) : null;
     if (order_id !== undefined) updateData.order_id = order_id;
 

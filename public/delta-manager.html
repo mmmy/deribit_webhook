@@ -450,6 +450,7 @@
                                     <th>合约名称</th>
                                     <th>目标Delta</th>
                                     <th>移仓Delta</th>
+                                    <th>Delta平均值</th>
                                     <th>TV_ID</th>
                                     <th>创建时间</th>
                                     <th>更新时间</th>
@@ -965,6 +966,7 @@
                     <td>${record.instrument_name}</td>
                     <td class="${record.target_delta >= 0 ? 'delta-positive' : 'delta-negative'}">${record.target_delta.toFixed(4)}</td>
                     <td class="${(record.move_position_delta || 0) >= 0 ? 'delta-positive' : 'delta-negative'}">${(record.move_position_delta || 0).toFixed(4)}</td>
+                    <td>${deltaAverageHtml}</td>
                     <td>${record.tv_id || '-'}</td>
                     <td>${new Date(record.created_at).toLocaleString()}</td>
                     <td>${new Date(record.updated_at).toLocaleString()}</td>
@@ -979,7 +981,7 @@
 
             if (positionRecords.length === 0) {
                 const row = document.createElement('tr');
-                row.innerHTML = '<td colspan="8" style="text-align: center; color: #7f8c8d;">暂无仓位记录</td>';
+                row.innerHTML = '<td colspan="9" style="text-align: center; color: #7f8c8d;">暂无仓位记录</td>';
                 tbody.appendChild(row);
             }
         }

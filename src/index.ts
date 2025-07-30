@@ -504,13 +504,12 @@ app.get('/api/delta/:accountId', async (req, res) => {
   }
 });
 
-// 获取账户的实际仓位和未成交订单
+// 获取账户的实际仓位和未成交订单（所有品种期权）
 app.get('/api/delta/:accountId/live-data', async (req, res) => {
   try {
     const { accountId } = req.params;
-    const currency = (req.query.currency as string) || 'BTC';
 
-    console.log(`🎯 Live data request: accountId=${accountId}, currency=${currency}, mockMode=${useMockMode}`);
+    console.log(`🎯 Live data request: accountId=${accountId}, mockMode=${useMockMode} (all currencies)`);
 
     // 验证账户是否存在
     const account = configLoader.getAccountByName(accountId);
@@ -525,29 +524,56 @@ app.get('/api/delta/:accountId/live-data', async (req, res) => {
     let openOrders = [];
 
     if (useMockMode) {
-      console.log(`🎭 Using mock mode for ${accountId}`);
-      // Mock模式：返回模拟数据
+      console.log(`🎭 Using mock mode for ${accountId} (all currencies)`);
+      // Mock模式：返回所有品种期权的模拟数据
       positions = [
         {
-          instrument_name: `${currency}-8AUG25-113000-C`,
+          instrument_name: 'BTC-8AUG25-113000-C',
           size: 10.5,
           direction: 'buy',
           average_price: 0.025,
           mark_price: 0.028,
           unrealized_pnl: 0.315,
           delta: 0.65
+        },
+        {
+          instrument_name: 'ETH-8AUG25-3500-P',
+          size: -5.0,
+          direction: 'sell',
+          average_price: 0.018,
+          mark_price: 0.015,
+          unrealized_pnl: 0.15,
+          delta: -0.42
+        },
+        {
+          instrument_name: 'SOL-8AUG25-200-C',
+          size: 20.0,
+          direction: 'buy',
+          average_price: 0.012,
+          mark_price: 0.014,
+          unrealized_pnl: 0.04,
+          delta: 0.38
         }
       ];
 
       openOrders = [
         {
           order_id: 'mock_order_123',
-          instrument_name: `${currency}-15AUG25-90000-P`,
+          instrument_name: 'BTC-15AUG25-90000-P',
           direction: 'sell',
           amount: 5.0,
           price: 0.015,
           order_type: 'limit',
           delta: -0.35
+        },
+        {
+          order_id: 'mock_order_456',
+          instrument_name: 'ETH-15AUG25-4000-C',
+          direction: 'buy',
+          amount: 8.0,
+          price: 0.022,
+          order_type: 'limit',
+          delta: 0.58
         }
       ];
     } else {
@@ -572,44 +598,78 @@ app.get('/api/delta/:accountId/live-data', async (req, res) => {
 
         const privateAPI = new DeribitPrivateAPI(apiConfig, authInfo);
 
-        console.log(`📊 Fetching positions and orders for ${currency.toUpperCase()}`);
+        console.log(`📊 Fetching positions and orders for all currencies (BTC, ETH, SOL)`);
 
-        // 并行获取仓位和未成交订单
-        const [positionsResult, ordersResult] = await Promise.all([
-          privateAPI.getPositions({ currency: currency.toUpperCase() }),
-          privateAPI.getOpenOrders({ currency: currency.toUpperCase() })
-        ]);
+        // 获取所有主要货币的期权仓位和订单
+        const currencies = ['BTC', 'ETH', 'SOL'];
+        const allPositions = [];
+        const allOrders = [];
 
-        positions = positionsResult || [];
-        openOrders = ordersResult || [];
+        for (const curr of currencies) {
+          try {
+            console.log(`📊 Fetching ${curr} options...`);
+            const [currPositions, currOrders] = await Promise.all([
+              privateAPI.getPositions({ currency: curr, kind: 'option' }),
+              privateAPI.getOpenOrders({ currency: curr, kind: 'option' })
+            ]);
 
-        console.log(`✅ Retrieved ${positions.length} positions and ${openOrders.length} open orders`);
+            allPositions.push(...(currPositions || []));
+            allOrders.push(...(currOrders || []));
+
+            console.log(`✅ ${curr}: ${currPositions?.length || 0} positions, ${currOrders?.length || 0} orders`);
+          } catch (currError) {
+            console.warn(`⚠️ Failed to fetch ${curr} data:`, currError);
+          }
+        }
+
+        positions = allPositions;
+        openOrders = allOrders;
+
+        console.log(`✅ Total retrieved: ${positions.length} positions and ${openOrders.length} open orders across all currencies`);
 
       } catch (error) {
         console.error('Failed to get live data from Deribit, falling back to mock data:', error);
 
-        // 回退到Mock数据
+        // 回退到Mock数据（所有品种）
         positions = [
           {
-            instrument_name: `${currency}-8AUG25-113000-C`,
+            instrument_name: 'BTC-8AUG25-113000-C',
             size: 10.5,
             direction: 'buy',
             average_price: 0.025,
             mark_price: 0.028,
             unrealized_pnl: 0.315,
             delta: 0.65
+          },
+          {
+            instrument_name: 'ETH-8AUG25-3500-P',
+            size: -5.0,
+            direction: 'sell',
+            average_price: 0.018,
+            mark_price: 0.015,
+            unrealized_pnl: 0.15,
+            delta: -0.42
           }
         ];
 
         openOrders = [
           {
             order_id: 'fallback_order_123',
-            instrument_name: `${currency}-15AUG25-90000-P`,
+            instrument_name: 'BTC-15AUG25-90000-P',
             direction: 'sell',
             amount: 5.0,
             price: 0.015,
             order_type: 'limit',
             delta: -0.35
+          },
+          {
+            order_id: 'fallback_order_456',
+            instrument_name: 'ETH-15AUG25-4000-C',
+            direction: 'buy',
+            amount: 8.0,
+            price: 0.022,
+            order_type: 'limit',
+            delta: 0.58
           }
         ];
       }
@@ -618,7 +678,7 @@ app.get('/api/delta/:accountId/live-data', async (req, res) => {
     res.json({
       success: true,
       accountId,
-      currency,
+      currencies: ['BTC', 'ETH', 'SOL'],
       mockMode: useMockMode,
       data: {
         positions,

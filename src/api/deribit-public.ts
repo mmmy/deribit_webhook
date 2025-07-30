@@ -4,6 +4,7 @@
  */
 
 import axios, { AxiosInstance } from 'axios';
+import { DeribitInstrumentDetail } from '../types/deribit-instrument';
 
 // 配置接口
 interface DeribitConfig {
@@ -176,10 +177,24 @@ export class DeribitPublicAPI {
     const response = await this.httpClient.get('/public/get_book_summary_by_instrument', { params });
     return response.data.result;
   }
+
+  /**
+   * 获取单个工具的详细信息
+   * GET /public/get_instrument
+   */
+  async getInstrument(params: {
+    instrument_name: string;   // 工具名称，如 BTC-PERPETUAL, BTC-25MAR23-50000-C
+  }): Promise<DeribitInstrumentDetail> {
+    const response = await this.httpClient.get('/public/get_instrument', { params });
+    return response.data.result;
+  }
 }
 
 // 导出配置接口供外部使用
 export { DeribitConfig };
+
+// 重新导出类型定义供外部使用
+  export { DeribitInstrumentDetail } from '../types/deribit-instrument';
 
 // 工厂函数，创建API实例
 export const createDeribitPublicAPI = (config: DeribitConfig) => {

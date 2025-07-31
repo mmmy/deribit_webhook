@@ -253,6 +253,35 @@ export class DeribitPrivateAPI {
   }
 
   /**
+   * 平仓指定工具的所有仓位
+   * JSON-RPC: private/close_position
+   */
+  async closePosition(params: {
+    instrument_name: string;   // 期权合约名称
+    type?: 'limit' | 'market'; // 订单类型，默认market
+    price?: number;            // 价格（限价单必需）
+  }) {
+    const jsonRpcRequest = {
+      jsonrpc: "2.0",
+      id: Date.now(),
+      method: "private/close_position",
+      params: {
+        instrument_name: params.instrument_name,
+        type: params.type || 'market',
+        ...params.price && { price: params.price }
+      }
+    };
+
+    const response = await this.httpClient.post('', jsonRpcRequest);
+
+    if (response.data.error) {
+      throw new Error(`Deribit API error: ${response.data.error.message} (code: ${response.data.error.code})`);
+    }
+
+    return response.data.result;
+  }
+
+  /**
    * 取消订单
    * JSON-RPC: private/cancel
    */

@@ -360,7 +360,7 @@ export class OptionTradingService {
   /**
    * 下单执行期权交易
    */
-  private async placeOptionOrder(instrumentName: string, params: OptionTradingParams, useMockMode: boolean): Promise<OptionTradingResult> {
+  public async placeOptionOrder(instrumentName: string, params: OptionTradingParams, useMockMode: boolean): Promise<OptionTradingResult> {
     console.log(`📋 Placing order for instrument: ${instrumentName}`);
     
     try {

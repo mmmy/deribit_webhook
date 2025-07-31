@@ -453,12 +453,27 @@ app.get('/api/options/:currency/delta/:delta', async (req, res) => {
 // Error handling
 process.on('uncaughtException', (error) => {
   console.error('Uncaught Exception:', error);
+  stopPositionsPolling();
   process.exit(1);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  stopPositionsPolling();
   process.exit(1);
+});
+
+// Graceful shutdown
+process.on('SIGINT', () => {
+  console.log('\n🛑 Received SIGINT, shutting down gracefully...');
+  stopPositionsPolling();
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  console.log('\n🛑 Received SIGTERM, shutting down gracefully...');
+  stopPositionsPolling();
+  process.exit(0);
 });
 
 // ===== Delta管理API路由 =====
@@ -851,6 +866,319 @@ app.delete('/api/delta/:accountId/:recordId', async (req, res) => {
   }
 });
 
+// ===== 仓位轮询API =====
+
+// 手动触发仓位轮询
+app.post('/api/positions/poll', async (req, res) => {
+  try {
+    console.log('📡 Manual positions polling triggered via API');
+
+    const results = await pollAllAccountsPositions();
+
+    res.json({
+      success: true,
+      message: 'Positions polling completed successfully',
+      data: results,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Manual polling failed:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to poll positions',
+      error: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// 获取轮询状态
+app.get('/api/positions/polling-status', (req, res) => {
+  res.json({
+    success: true,
+    data: {
+      isActive: pollingInterval !== null,
+      intervalMinutes: 15,
+      nextPollEstimate: pollingInterval ?
+        new Date(Date.now() + 15 * 60 * 1000).toISOString() :
+        null,
+      enabledAccounts: configLoader.getEnabledAccounts().map(a => a.name)
+    },
+    timestamp: new Date().toISOString()
+  });
+});
+
+// 启动轮询
+app.post('/api/positions/start-polling', (req, res) => {
+  try {
+    if (pollingInterval !== null) {
+      return res.json({
+        success: false,
+        message: 'Polling is already active',
+        data: {
+          isActive: true,
+          intervalMinutes: 15
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    console.log('📡 Manual start polling triggered via API');
+    startPositionsPolling();
+
+    res.json({
+      success: true,
+      message: 'Positions polling started successfully',
+      data: {
+        isActive: true,
+        intervalMinutes: 15,
+        nextPollEstimate: new Date(Date.now() + 15 * 60 * 1000).toISOString()
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Failed to start polling:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to start polling',
+      error: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// 停止轮询
+app.post('/api/positions/stop-polling', (req, res) => {
+  try {
+    if (pollingInterval === null) {
+      return res.json({
+        success: false,
+        message: 'Polling is not active',
+        data: {
+          isActive: false
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    console.log('📡 Manual stop polling triggered via API');
+    stopPositionsPolling();
+
+    res.json({
+      success: true,
+      message: 'Positions polling stopped successfully',
+      data: {
+        isActive: false,
+        intervalMinutes: 15
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Failed to stop polling:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to stop polling',
+      error: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// ===== 定时轮询功能 =====
+
+/**
+ * 轮询所有启用账户的期权仓位
+ */
+async function pollAllAccountsPositions() {
+  const requestId = `poll_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+
+  try {
+    console.log(`🔄 [${requestId}] Starting positions polling for all enabled accounts`);
+
+    const accounts = configLoader.getEnabledAccounts();
+    if (accounts.length === 0) {
+      console.log(`⚠️ [${requestId}] No enabled accounts found for polling`);
+      return;
+    }
+
+    const currencies = ['BTC', 'ETH', 'SOL'];
+    const results = [];
+
+    for (const account of accounts) {
+      try {
+        console.log(`📊 [${requestId}] Polling account: ${account.name}`);
+
+        if (useMockMode) {
+          // Mock模式：生成模拟数据（直接生成仓位数组，与真实API保持一致）
+          const mockPositions = currencies.map(currency => ({
+            instrument_name: `${currency}-8AUG25-${currency === 'BTC' ? '113000' : currency === 'ETH' ? '3500' : '200'}-C`,
+            size: Math.random() * 20 - 10, // -10 到 10 之间的随机数
+            direction: Math.random() > 0.5 ? 'buy' : 'sell',
+            average_price: Math.random() * 0.05,
+            mark_price: Math.random() * 0.05,
+            unrealized_pnl: (Math.random() - 0.5) * 2,
+            delta: (Math.random() - 0.5) * 2
+          })).filter(pos => pos.size !== 0); // 只保留非零仓位
+
+          results.push({
+            accountName: account.name,
+            success: true,
+            mockMode: true,
+            data: mockPositions,
+            timestamp: new Date().toISOString()
+          });
+
+          console.log(`✅ [${requestId}] Mock data generated for ${account.name}: ${mockPositions.length} positions`);
+        } else {
+          // 真实模式：调用Deribit API
+          await deribitAuth.authenticate(account.name);
+          const tokenInfo = deribitAuth.getTokenInfo(account.name);
+
+          if (!tokenInfo) {
+            throw new Error(`Authentication failed for ${account.name}`);
+          }
+
+          const isTestEnv = process.env.USE_TEST_ENVIRONMENT === 'true';
+          const apiConfig = getConfigByEnvironment(isTestEnv);
+          const authInfo = createAuthInfo(tokenInfo.accessToken);
+          const privateAPI = new DeribitPrivateAPI(apiConfig, authInfo);
+
+          // 获取所有期权仓位（不指定货币，返回所有货币的期权）
+          const allPositions = await privateAPI.getPositions({
+            kind: 'option'
+          });
+
+          // 只保留有仓位的记录（size != 0）
+          const activePositions = allPositions.filter(pos => pos.size !== 0);
+          // 分析仓位delta并查询数据库记录
+          for (const pos of activePositions) {
+            try {
+              // 1. 计算仓位delta = pos.delta / pos.size
+              const positionDelta = pos.delta && pos.size !== 0 ? pos.delta / pos.size : 0;
+
+              // 2. 根据pos查询Delta数据库记录
+              const deltaRecords = deltaManager.getRecords({
+                account_id: account.name,
+                instrument_name: pos.instrument_name
+              });
+
+              if (deltaRecords.length > 0) {
+                // 找到最新的记录
+                const latestRecord = deltaRecords.sort((a, b) => {
+                  const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+                  const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+                  return timeB - timeA;
+                })[0];
+
+                if (latestRecord.min_expire_days != null && latestRecord.move_position_delta !== undefined) {
+                  const targetDeltaAbs = Math.abs(latestRecord.target_delta || 0);
+                  const positionDeltaAbs = Math.abs(positionDelta);
+
+                  // 4. 如果move_position_delta的绝对值 < 仓位delta的绝对值，打印仓位信息
+                  if (targetDeltaAbs < positionDeltaAbs) {
+                    console.log(`📊 [${requestId}] Position Delta Analysis - ${account.name}:`);
+                    console.log(`   🎯 Instrument: ${pos.instrument_name}`);
+                    console.log(`   📈 Position Size: ${pos.size}`);
+                    console.log(`   🔢 Position Delta: ${pos.delta?.toFixed(4) || 'N/A'}`);
+                    console.log(`   📐 Delta per Unit: ${positionDelta.toFixed(4)}`);
+                    console.log(`   🎯 Target Delta: ${latestRecord.target_delta}`);
+                    console.log(`   📊 Move Position Delta: ${latestRecord.move_position_delta || 0}`);
+                    console.log(`   ⚖️ Condition: |${latestRecord.move_position_delta || 0}| < |${positionDelta.toFixed(4)}| = ${targetDeltaAbs < positionDeltaAbs ? 'TRUE' : 'FALSE'}`);
+                    console.log(`   📅 Record Created: ${latestRecord.created_at ? new Date(latestRecord.created_at).toLocaleString() : 'Unknown'}`);
+                    console.log(`   🆔 Record ID: ${latestRecord.id}`);
+
+                    // TODO: 触发仓位调整, 将下面的步骤包装成一个函数
+                    // 1. 根据latestRecord.move_position_delta 获取  deltaResult = await this.deribitClient.getInstrumentByDelta(currency, payload.n, payload.delta1, longSide);
+                    // 2. 如果deltaResult不为空, 则执行下面步骤
+                    // 3. 市价平掉当前仓位
+                    // 2. 第3步成功后, 删除数据库记录
+                    // 4. 下单: OptionTradingService.placeOptionOrder
+                  }
+                } else {
+                  console.log(`📝 [${requestId}] Found record for ${pos.instrument_name} but target_delta is null`);
+                }
+              } else {
+                console.log(`📝 [${requestId}] No delta records found for ${pos.instrument_name} in account ${account.name}`);
+              }
+
+            } catch (posError) {
+              console.warn(`⚠️ [${requestId}] Failed to analyze position ${pos.instrument_name}:`, posError);
+            }
+          }
+          results.push({
+            accountName: account.name,
+            success: true,
+            mockMode: false,
+            data: activePositions,
+            timestamp: new Date().toISOString()
+          });
+
+          console.log(`✅ [${requestId}] Real data fetched for ${account.name}: ${activePositions.length} active positions`);
+        }
+
+      } catch (accountError) {
+        console.error(`❌ [${requestId}] Failed to poll account ${account.name}:`, accountError);
+        results.push({
+          accountName: account.name,
+          success: false,
+          error: accountError instanceof Error ? accountError.message : 'Unknown error',
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
+
+    // 汇总结果
+    const successCount = results.filter(r => r.success).length;
+    const totalPositions = results
+      .filter(r => r.success)
+      .reduce((sum, r) => sum + (r.data?.length || 0), 0);
+
+    console.log(`📊 [${requestId}] Polling completed: ${successCount}/${accounts.length} accounts successful, ${totalPositions} total positions`);
+
+    // 这里可以添加后续处理逻辑，比如：
+    // 1. 将数据存储到数据库
+    // 2. 计算总体风险指标
+    // 3. 触发风险管理规则
+    // 4. 发送通知等
+
+    return results;
+
+  } catch (error) {
+    console.error(`💥 [${requestId}] Polling error:`, error);
+    throw error;
+  }
+}
+
+// 启动定时轮询
+let pollingInterval: NodeJS.Timeout | null = null;
+
+function startPositionsPolling() {
+  // 15分钟 = 15 * 60 * 1000 毫秒
+  const POLLING_INTERVAL = 15 * 60 * 1000;
+
+  console.log(`⏰ Starting positions polling every 15 minutes`);
+
+  // 立即执行一次
+  pollAllAccountsPositions().catch(error => {
+    console.error('Initial polling failed:', error);
+  });
+
+  // 设置定时轮询
+  pollingInterval = setInterval(() => {
+    pollAllAccountsPositions().catch(error => {
+      console.error('Scheduled polling failed:', error);
+    });
+  }, POLLING_INTERVAL);
+}
+
+function stopPositionsPolling() {
+  if (pollingInterval) {
+    clearInterval(pollingInterval);
+    pollingInterval = null;
+    console.log(`⏹️ Positions polling stopped`);
+  }
+}
+
 // Start server
 app.listen(port, () => {
   console.log(`🚀 Deribit Options Trading Microservice running on port ${port}`);
@@ -861,10 +1189,25 @@ app.listen(port, () => {
   console.log(`🌐 Health Check: http://localhost:${port}/health`);
   console.log(`📡 Webhook Endpoint: http://localhost:${port}/webhook/signal`);
   console.log(`🎯 Delta Manager: http://localhost:${port}/delta`);
+  console.log(`📊 Manual Polling: http://localhost:${port}/api/positions/poll`);
+  console.log(`📈 Polling Status: http://localhost:${port}/api/positions/polling-status`);
+  console.log(`▶️ Start Polling: http://localhost:${port}/api/positions/start-polling`);
+  console.log(`⏹️ Stop Polling: http://localhost:${port}/api/positions/stop-polling`);
 
   // 显示配置的账户
   const accounts = configLoader.getEnabledAccounts();
   console.log(`👥 Enabled Accounts: ${accounts.map(a => a.name).join(', ')}`);
+
+  // 检查是否自动启动轮询（默认启动）
+  const autoStartPolling = process.env.AUTO_START_POLLING !== 'false';
+  console.log(`🔄 Auto Start Polling: ${autoStartPolling}`);
+
+  if (autoStartPolling) {
+    // 启动定时轮询
+    startPositionsPolling();
+  } else {
+    console.log(`⏸️ Polling not started automatically. Use POST /api/positions/start-polling to start manually.`);
+  }
 });
 
 export default app;

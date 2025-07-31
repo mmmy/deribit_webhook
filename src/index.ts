@@ -598,32 +598,16 @@ app.get('/api/delta/:accountId/live-data', async (req, res) => {
 
         const privateAPI = new DeribitPrivateAPI(apiConfig, authInfo);
 
-        console.log(`📊 Fetching positions and orders for all currencies (BTC, ETH, SOL)`);
+        console.log(`📊 Fetching positions and orders for all currencies`);
 
-        // 获取所有主要货币的期权仓位和订单
-        const currencies = ['BTC', 'ETH', 'SOL'];
-        const allPositions = [];
-        const allOrders = [];
+        // 获取所有货币的期权仓位和订单（不指定currency参数）
+        const [allPositions, allOrders] = await Promise.all([
+          privateAPI.getPositions({ kind: 'option' }),
+          privateAPI.getOpenOrders({ kind: 'option' })
+        ]);
 
-        for (const curr of currencies) {
-          try {
-            console.log(`📊 Fetching ${curr} options...`);
-            const [currPositions, currOrders] = await Promise.all([
-              privateAPI.getPositions({ currency: curr, kind: 'option' }),
-              privateAPI.getOpenOrders({ currency: curr, kind: 'option' })
-            ]);
-
-            allPositions.push(...(currPositions || []));
-            allOrders.push(...(currOrders || []));
-
-            console.log(`✅ ${curr}: ${currPositions?.length || 0} positions, ${currOrders?.length || 0} orders`);
-          } catch (currError) {
-            console.warn(`⚠️ Failed to fetch ${curr} data:`, currError);
-          }
-        }
-
-        positions = allPositions;
-        openOrders = allOrders;
+        positions = allPositions || [];
+        openOrders = allOrders || [];
 
         console.log(`✅ Total retrieved: ${positions.length} positions and ${openOrders.length} open orders across all currencies`);
 

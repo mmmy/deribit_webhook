@@ -73,8 +73,8 @@ export interface WebhookSignalPayload {
   alertMessage?: string;                 // 警报消息
   comment?: string;                      // 注释
   qtyType: 'fixed' | 'cash'; // 数量类型
-  delta1?: number;                       // 期权Delta值，用于开仓时选择期权
-  n?: number;                           // 最小到期天数，用于开仓时选择期权
+  delta1?: number;                       // 期权Delta值，用于开仓时选择期权，同时记录到move_position_delta字段
+  n?: number;                           // 最小到期天数，用于开仓时选择期权，同时记录到min_expire_days字段
   delta2?: number;                       // 目标Delta值，用于将非立即成交的开仓订单记录到delta数据库
 }
 

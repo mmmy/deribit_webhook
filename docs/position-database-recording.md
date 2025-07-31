@@ -35,6 +35,7 @@ CREATE TABLE delta_records (
   order_id TEXT,                         -- 订单ID (仓位记录为null)
   target_delta REAL NOT NULL,            -- 目标Delta值 (-1 到 1)
   move_position_delta REAL NOT NULL,     -- 移仓Delta值 (-1 到 1)
+  min_expire_days INTEGER NOT NULL DEFAULT 1 CHECK (min_expire_days > 0), -- 最小到期天数 (大于0的整数)
   tv_id INTEGER,                         -- TradingView信号ID
   record_type TEXT NOT NULL,             -- 记录类型 ('position' | 'order')
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

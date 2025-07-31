@@ -61,6 +61,7 @@ export class DeltaManager {
     const hasTargetDelta = tableInfo.some((col: any) => col.name === 'target_delta');
     const hasDelta = tableInfo.some((col: any) => col.name === 'delta');
     const hasMovePositionDelta = tableInfo.some((col: any) => col.name === 'move_position_delta');
+    const hasMinExpireDays = tableInfo.some((col: any) => col.name === 'min_expire_days');
 
     // 迁移1: 添加tv_id列
     if (!hasTV_ID && tableInfo.length > 0) {
@@ -120,6 +121,20 @@ export class DeltaManager {
 
       } catch (error) {
         console.error('❌ 添加move_position_delta字段失败:', error);
+        throw error;
+      }
+    }
+
+    // 迁移5: 添加min_expire_days字段
+    if (!hasMinExpireDays && tableInfo.length > 0) {
+      console.log('🔄 检测到需要添加min_expire_days字段，执行迁移...');
+
+      try {
+        this.rebuildTableWithMinExpireDays();
+        console.log('✅ 已添加min_expire_days字段');
+
+      } catch (error) {
+        console.error('❌ 添加min_expire_days字段失败:', error);
         throw error;
       }
     }
@@ -279,6 +294,46 @@ export class DeltaManager {
   }
 
   /**
+   * 重建表以添加min_expire_days字段
+   */
+  private rebuildTableWithMinExpireDays(): void {
+    const transaction = this.db.transaction(() => {
+      // 创建新表
+      this.db.exec(`
+        CREATE TABLE delta_records_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          account_id TEXT NOT NULL,
+          instrument_name TEXT NOT NULL,
+          order_id TEXT,
+          target_delta REAL NOT NULL CHECK (target_delta >= -1 AND target_delta <= 1),
+          move_position_delta REAL NOT NULL DEFAULT 0 CHECK (move_position_delta >= -1 AND move_position_delta <= 1),
+          min_expire_days INTEGER NOT NULL DEFAULT 1 CHECK (min_expire_days > 0),
+          tv_id INTEGER,
+          record_type TEXT NOT NULL CHECK (record_type IN ('position', 'order')),
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
+      // 复制数据，为min_expire_days设置默认值1
+      this.db.exec(`
+        INSERT INTO delta_records_new (id, account_id, instrument_name, order_id, target_delta, move_position_delta, min_expire_days, tv_id, record_type, created_at, updated_at)
+        SELECT id, account_id, instrument_name, order_id, target_delta, move_position_delta, 1, tv_id, record_type, created_at, updated_at
+        FROM delta_records
+      `);
+
+      // 删除旧表
+      this.db.exec('DROP TABLE delta_records');
+
+      // 重命名新表
+      this.db.exec('ALTER TABLE delta_records_new RENAME TO delta_records');
+    });
+
+    transaction();
+    console.log('✅ min_expire_days字段已添加');
+  }
+
+  /**
    * 初始化数据库表
    */
   private initializeTables(): void {
@@ -292,6 +347,7 @@ export class DeltaManager {
         order_id TEXT,
         target_delta REAL NOT NULL CHECK (target_delta >= -1 AND target_delta <= 1),
         move_position_delta REAL NOT NULL DEFAULT 0 CHECK (move_position_delta >= -1 AND move_position_delta <= 1),
+        min_expire_days INTEGER NOT NULL DEFAULT 1 CHECK (min_expire_days > 0),
         tv_id INTEGER,
         record_type TEXT NOT NULL CHECK (record_type IN ('position', 'order')),
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -337,8 +393,8 @@ export class DeltaManager {
    */
   public createRecord(input: CreateDeltaRecordInput): DeltaRecord {
     const insertSQL = `
-      INSERT INTO delta_records (account_id, instrument_name, order_id, target_delta, move_position_delta, tv_id, record_type)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO delta_records (account_id, instrument_name, order_id, target_delta, move_position_delta, min_expire_days, tv_id, record_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     try {
@@ -349,6 +405,7 @@ export class DeltaManager {
         input.order_id || null,
         input.target_delta,
         input.move_position_delta,
+        input.min_expire_days,
         input.tv_id,
         input.record_type
       );
@@ -432,6 +489,11 @@ export class DeltaManager {
     if (input.move_position_delta !== undefined) {
       fields.push('move_position_delta = ?');
       params.push(input.move_position_delta);
+    }
+
+    if (input.min_expire_days !== undefined) {
+      fields.push('min_expire_days = ?');
+      params.push(input.min_expire_days);
     }
 
     if (input.order_id !== undefined) {
@@ -632,9 +694,10 @@ export class DeltaManager {
 
       if (existing) {
         // 更新现有记录
-        const updated = this.updateRecord(existing.id!, { 
+        const updated = this.updateRecord(existing.id!, {
           target_delta: input.target_delta,
-          move_position_delta: input.move_position_delta
+          move_position_delta: input.move_position_delta,
+          min_expire_days: input.min_expire_days
         });
         if (!updated) {
           throw new Error('更新现有仓位记录失败');

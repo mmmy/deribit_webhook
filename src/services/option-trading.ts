@@ -436,9 +436,9 @@ export class OptionTradingService {
 
         // 如果qtyType是cash，将美元金额转换为合约数量
         if (params.qtyType === 'cash') {
-          // 开仓大小 = (size / 指数价格) * 合约乘数
+          // 开仓大小 = (size / 合约价格 * 指数价格) * 合约乘数
           // Deribit期权合约乘数通常是1
-          orderQuantity = params.quantity / optionDetails.index_price;
+          orderQuantity = params.quantity / (entryPrice * optionDetails.index_price);
           console.log(`💰 Cash mode: converting $${params.quantity} to ${orderQuantity} contracts at price ${entryPrice}`);
         }
 

@@ -144,7 +144,7 @@ export class DeribitClient {
       // 3.1 从所有期权中找到最近的两个到期日
       const now = new Date();
       const minExpiryTime = new Date(
-        now.getTime() + minExpiredDays * 24 * 60 * 60 * 1000
+        now.getTime() + (minExpiredDays - 1) * 24 * 60 * 60 * 1000
       );
 
       // 过滤出符合最小到期天数要求的期权

@@ -307,7 +307,7 @@ export class DeltaManager {
           order_id TEXT,
           target_delta REAL NOT NULL CHECK (target_delta >= -1 AND target_delta <= 1),
           move_position_delta REAL NOT NULL DEFAULT 0 CHECK (move_position_delta >= -1 AND move_position_delta <= 1),
-          min_expire_days INTEGER NOT NULL DEFAULT 1 CHECK (min_expire_days > 0),
+          min_expire_days INTEGER CHECK (min_expire_days IS NULL OR min_expire_days > 0),
           tv_id INTEGER,
           record_type TEXT NOT NULL CHECK (record_type IN ('position', 'order')),
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -315,10 +315,10 @@ export class DeltaManager {
         )
       `);
 
-      // 复制数据，为min_expire_days设置默认值1
+      // 复制数据，为min_expire_days设置默认值null
       this.db.exec(`
         INSERT INTO delta_records_new (id, account_id, instrument_name, order_id, target_delta, move_position_delta, min_expire_days, tv_id, record_type, created_at, updated_at)
-        SELECT id, account_id, instrument_name, order_id, target_delta, move_position_delta, 1, tv_id, record_type, created_at, updated_at
+        SELECT id, account_id, instrument_name, order_id, target_delta, move_position_delta, NULL, tv_id, record_type, created_at, updated_at
         FROM delta_records
       `);
 
@@ -347,7 +347,7 @@ export class DeltaManager {
         order_id TEXT,
         target_delta REAL NOT NULL CHECK (target_delta >= -1 AND target_delta <= 1),
         move_position_delta REAL NOT NULL DEFAULT 0 CHECK (move_position_delta >= -1 AND move_position_delta <= 1),
-        min_expire_days INTEGER NOT NULL DEFAULT 1 CHECK (min_expire_days > 0),
+        min_expire_days INTEGER CHECK (min_expire_days IS NULL OR min_expire_days > 0),
         tv_id INTEGER,
         record_type TEXT NOT NULL CHECK (record_type IN ('position', 'order')),
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

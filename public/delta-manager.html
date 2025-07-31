@@ -704,24 +704,8 @@
                 }
             });
 
-            // 添加按钮事件监听器作为备选方案
+            // 事件委托处理器已经处理了所有按钮点击事件，不需要额外的事件监听器
             setTimeout(() => {
-                const refreshBtn = document.getElementById('refreshBtn');
-                const refreshAllBtn = document.getElementById('refreshAllBtn');
-
-                if (refreshBtn) {
-                    refreshBtn.addEventListener('click', function(e) {
-                        e.preventDefault();
-                        refreshLiveData();
-                    });
-                }
-
-                if (refreshAllBtn) {
-                    refreshAllBtn.addEventListener('click', function(e) {
-                        e.preventDefault();
-                        refreshAllData();
-                    });
-                }
 
                 // 统一的事件委托处理器
                 document.addEventListener('click', function(e) {

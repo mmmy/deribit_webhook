@@ -109,7 +109,8 @@ export class OptionTradingService {
       orderType: price ? 'limit' : 'market',
       qtyType: payload.qtyType || 'fixed',
       delta1: payload.delta1, // 传递期权选择Delta值，同时用于记录到move_position_delta
-      delta2: payload.delta2 // 传递目标Delta值
+      delta2: payload.delta2, // 传递目标Delta值
+      n: payload.n // 传递最小到期天数
     };
   }
 
@@ -598,6 +599,7 @@ export class OptionTradingService {
           instrument_name: instrumentName,
           target_delta: params.delta2 || 0, // delta2记录到target_delta字段，如果没有则默认为0
           move_position_delta: params.delta1 || 0, // delta1记录到move_position_delta字段，如果没有则默认为0
+          min_expire_days: params.n || 1, // 使用n参数作为最小到期天数，默认为1
           order_id: recordType === DeltaRecordType.ORDER ? (orderResult.order?.order_id || '') : null,
           tv_id: null, // 暂时设为null，后续可以从webhook payload中获取
           record_type: recordType
@@ -666,6 +668,7 @@ export class OptionTradingService {
         instrument_name: executionStats.instrumentName,
         target_delta: Math.max(-1, Math.min(1, targetDelta)), // 确保在[-1, 1]范围内
         move_position_delta: Math.max(-1, Math.min(1, movePositionDelta)), // 确保在[-1, 1]范围内
+        min_expire_days: 1, // 默认最小到期天数为1
         tv_id: null, // 暂时设为null，后续可以从webhook payload中获取
         record_type: DeltaRecordType.POSITION // 策略完成后记录为仓位
       };

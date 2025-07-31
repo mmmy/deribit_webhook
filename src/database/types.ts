@@ -16,7 +16,7 @@ export interface DeltaRecord {
   order_id?: string;              // 订单ID (仓位时为null)
   target_delta: number;           // 目标Delta值 (-1 到 1)
   move_position_delta: number;    // 移仓Delta值 (-1 到 1)
-  min_expire_days: number;        // 最小到期天数 (大于0的整数)
+  min_expire_days: number | null; // 最小到期天数 (大于0的整数，可为null)
   tv_id: number | null;           // TradingView信号ID (可选)
   record_type: DeltaRecordType;   // 记录类型
   created_at?: string;            // 创建时间
@@ -30,7 +30,7 @@ export interface CreateDeltaRecordInput {
   order_id?: string;
   target_delta: number;
   move_position_delta: number;
-  min_expire_days: number;
+  min_expire_days: number | null;
   tv_id: number | null;
   record_type: DeltaRecordType;
 }
@@ -39,7 +39,7 @@ export interface CreateDeltaRecordInput {
 export interface UpdateDeltaRecordInput {
   target_delta?: number;
   move_position_delta?: number;
-  min_expire_days?: number;
+  min_expire_days?: number | null;
   order_id?: string;
   tv_id?: number | null;
 }

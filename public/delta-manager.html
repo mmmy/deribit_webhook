@@ -602,9 +602,9 @@
                     <small style="color: #666; font-size: 12px;">仓位和订单都需要设置移仓Delta值</small>
                 </div>
                 <div class="form-group">
-                    <label for="quickMinExpireDays">最小到期天数 <span style="color: red;">*</span>:</label>
-                    <input type="number" id="quickMinExpireDays" min="1" step="1" value="1" placeholder="请输入最小到期天数 (大于0的整数)" required>
-                    <small style="color: #666; font-size: 12px;">用于期权选择的最小到期天数</small>
+                    <label for="quickMinExpireDays">最小到期天数 (可留空):</label>
+                    <input type="number" id="quickMinExpireDays" min="1" step="1" placeholder="请输入最小到期天数 (大于0的整数，可留空)">
+                    <small style="color: #666; font-size: 12px;">用于期权选择的最小到期天数，留空表示不限制</small>
                 </div>
                 <div class="form-group">
                     <label for="quickTvId">TV_ID (可留空):</label>
@@ -641,8 +641,8 @@
                     <input type="number" id="editMovePositionDeltaValue" step="0.0001" min="-1" max="1" required>
                 </div>
                 <div class="form-group">
-                    <label for="editMinExpireDays">最小到期天数:</label>
-                    <input type="number" id="editMinExpireDays" min="1" step="1" required>
+                    <label for="editMinExpireDays">最小到期天数 (可留空):</label>
+                    <input type="number" id="editMinExpireDays" min="1" step="1" placeholder="留空表示不限制">
                 </div>
                 <div class="form-group">
                     <label for="editTvId">TV_ID (可留空):</label>
@@ -973,7 +973,7 @@
                     <td>${record.instrument_name}</td>
                     <td class="${record.target_delta >= 0 ? 'delta-positive' : 'delta-negative'}">${record.target_delta.toFixed(4)}</td>
                     <td class="${(record.move_position_delta || 0) >= 0 ? 'delta-positive' : 'delta-negative'}">${(record.move_position_delta || 0).toFixed(4)}</td>
-                    <td>${record.min_expire_days || 1}</td>
+                    <td>${record.min_expire_days || '-'}</td>
                     <td>${deltaAverageHtml}</td>
                     <td>${record.tv_id || '-'}</td>
                     <td>${new Date(record.created_at).toLocaleString()}</td>
@@ -1028,7 +1028,7 @@
                     <td>${record.instrument_name}</td>
                     <td class="${record.target_delta >= 0 ? 'delta-positive' : 'delta-negative'}">${record.target_delta.toFixed(4)}</td>
                     <td class="${(record.move_position_delta || 0) >= 0 ? 'delta-positive' : 'delta-negative'}">${(record.move_position_delta || 0).toFixed(4)}</td>
-                    <td>${record.min_expire_days || 1}</td>
+                    <td>${record.min_expire_days || '-'}</td>
                     <td>${record.tv_id || '-'}</td>
                     <td>${new Date(record.created_at).toLocaleString()}</td>
                     <td>${new Date(record.updated_at).toLocaleString()}</td>
@@ -1566,15 +1566,14 @@
             }
 
             const minExpireDaysInput = document.getElementById('quickMinExpireDays').value.trim();
-            if (!minExpireDaysInput) {
-                showError('必须输入最小到期天数');
-                return;
-            }
+            let minExpireDaysValue = null;
 
-            const minExpireDaysValue = parseInt(minExpireDaysInput);
-            if (isNaN(minExpireDaysValue) || minExpireDaysValue <= 0) {
-                showError('最小到期天数必须是大于0的整数');
-                return;
+            if (minExpireDaysInput) {
+                minExpireDaysValue = parseInt(minExpireDaysInput);
+                if (isNaN(minExpireDaysValue) || minExpireDaysValue <= 0) {
+                    showError('最小到期天数必须是大于0的整数');
+                    return;
+                }
             }
 
             const tvId = tvIdInput.trim() ? parseInt(tvIdInput) : null;
@@ -1627,7 +1626,7 @@
             document.getElementById('editInstrumentName').value = record.instrument_name;
             document.getElementById('editTargetDeltaValue').value = record.target_delta;
             document.getElementById('editMovePositionDeltaValue').value = record.move_position_delta || 0;
-            document.getElementById('editMinExpireDays').value = record.min_expire_days || 1;
+            document.getElementById('editMinExpireDays').value = record.min_expire_days || '';
             document.getElementById('editTvId').value = record.tv_id || '';
 
             // 根据记录类型显示/隐藏字段
@@ -1669,14 +1668,18 @@
 
             const targetDeltaValue = parseFloat(document.getElementById('editTargetDeltaValue').value);
             const movePositionDeltaValue = parseFloat(document.getElementById('editMovePositionDeltaValue').value);
-            const minExpireDaysValue = parseInt(document.getElementById('editMinExpireDays').value);
+            const minExpireDaysInput = document.getElementById('editMinExpireDays').value.trim();
             const tvIdInput = document.getElementById('editTvId').value.trim();
             const tvId = tvIdInput ? parseInt(tvIdInput) : null;
 
             // 验证最小到期天数
-            if (isNaN(minExpireDaysValue) || minExpireDaysValue <= 0) {
-                showError('最小到期天数必须是大于0的整数');
-                return;
+            let minExpireDaysValue = null;
+            if (minExpireDaysInput) {
+                minExpireDaysValue = parseInt(minExpireDaysInput);
+                if (isNaN(minExpireDaysValue) || minExpireDaysValue <= 0) {
+                    showError('最小到期天数必须是大于0的整数');
+                    return;
+                }
             }
 
             const updateData = {

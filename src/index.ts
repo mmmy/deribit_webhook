@@ -1324,10 +1324,11 @@ async function pollAllAccountsPositions() {
 let pollingInterval: NodeJS.Timeout | null = null;
 
 function startPositionsPolling() {
-  // 15分钟 = 15 * 60 * 1000 毫秒
-  const POLLING_INTERVAL = 15 * 60 * 1000;
+  // 从环境变量读取轮询间隔，默认15分钟
+  const pollingIntervalMinutes = parseInt(process.env.POLLING_INTERVAL_MINUTES || '15', 10);
+  const POLLING_INTERVAL = pollingIntervalMinutes * 60 * 1000;
 
-  console.log(`⏰ Starting positions polling every 15 minutes`);
+  console.log(`⏰ Starting positions polling every ${pollingIntervalMinutes} minutes`);
 
   // 立即执行一次
   pollAllAccountsPositions().catch(error => {

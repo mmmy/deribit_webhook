@@ -1,5 +1,6 @@
 import type { DeltaFilterResult, DeribitOptionInstrument, OptionDetails } from '../types';
 import { ApiKeyConfig, AuthResponse } from '../types';
+import type { DeribitInstrumentDetail } from '../types/deribit-instrument';
 
 export class MockDeribitClient {
   /**
@@ -57,7 +58,36 @@ export class MockDeribitClient {
    */
   private generateMockInstruments(currency: string): DeribitOptionInstrument[] {
     const instruments: DeribitOptionInstrument[] = [];
-    const basePrice = currency === 'BTC' ? 50000 : currency === 'ETH' ? 3000 : 100;
+
+    // 确定基础价格和underlying asset
+    let basePrice: number;
+    let underlyingAsset: string;
+
+    if (currency === 'USDC') {
+      // USDC期权：生成多种underlying assets
+      const usdcAssets = ['SOL', 'XRP', 'MATIC'];
+      const allInstruments: DeribitOptionInstrument[] = [];
+
+      for (const asset of usdcAssets) {
+        const assetPrice = asset === 'SOL' ? 150 : asset === 'XRP' ? 0.6 : 0.8;
+        const assetInstruments = this.generateInstrumentsForAsset(asset, 'USDC', assetPrice);
+        allInstruments.push(...assetInstruments);
+      }
+
+      return allInstruments;
+    } else {
+      // 传统期权：BTC, ETH等
+      basePrice = currency === 'BTC' ? 50000 : currency === 'ETH' ? 3000 : currency === 'SOL' ? 150 : 100;
+      underlyingAsset = currency;
+      return this.generateInstrumentsForAsset(underlyingAsset, currency, basePrice);
+    }
+  }
+
+  /**
+   * 为特定资产生成期权工具
+   */
+  private generateInstrumentsForAsset(asset: string, currency: string, basePrice: number): DeribitOptionInstrument[] {
+    const instruments: DeribitOptionInstrument[] = [];
 
     // 生成不同到期日期
     const expiryDates = [
@@ -72,47 +102,132 @@ export class MockDeribitClient {
 
     expiryDates.forEach(expiry => {
       strikeMultipliers.forEach(multiplier => {
-        const strike = Math.round(basePrice * multiplier);
+        const strike = Math.round(basePrice * multiplier * 100) / 100; // 保留2位小数
+
+        // 确定instrument name格式
+        const instrumentPrefix = currency === 'USDC' ? `${asset}_USDC` : asset;
 
         // 看涨期权
         instruments.push({
-          instrument_name: `${currency}-${expiry.name}-${strike}-C`,
+          instrument_name: `${instrumentPrefix}-${expiry.name}-${strike}-C`,
           currency: currency,
           kind: 'option',
           option_type: 'call',
           strike: strike,
           expiration_timestamp: expiry.timestamp,
-          tick_size: 0.0001,
+          tick_size: currency === 'USDC' ? 0.01 : 0.0001,
           min_trade_amount: 0.1,
-          contract_size: 1,
+          contract_size: currency === 'USDC' ? 10 : 1, // USDC期权有10倍乘数
           is_active: true,
           settlement_period: 'day',
           creation_timestamp: Date.now() - Math.random() * 86400000 * 30,
-          base_currency: currency,
-          quote_currency: 'USD'
+          base_currency: asset,
+          quote_currency: currency === 'USDC' ? 'USDC' : 'USD'
         });
 
         // 看跌期权
         instruments.push({
-          instrument_name: `${currency}-${expiry.name}-${strike}-P`,
+          instrument_name: `${instrumentPrefix}-${expiry.name}-${strike}-P`,
           currency: currency,
           kind: 'option',
           option_type: 'put',
           strike: strike,
           expiration_timestamp: expiry.timestamp,
-          tick_size: 0.0001,
+          tick_size: currency === 'USDC' ? 0.01 : 0.0001,
           min_trade_amount: 0.1,
-          contract_size: 1,
+          contract_size: currency === 'USDC' ? 10 : 1, // USDC期权有10倍乘数
           is_active: true,
           settlement_period: 'day',
           creation_timestamp: Date.now() - Math.random() * 86400000 * 30,
-          base_currency: currency,
-          quote_currency: 'USD'
+          base_currency: asset,
+          quote_currency: currency === 'USDC' ? 'USDC' : 'USD'
         });
       });
     });
 
     return instruments;
+  }
+
+  /**
+   * Mock获取单个工具的详细信息
+   */
+  async getInstrument(instrumentName: string): Promise<DeribitInstrumentDetail | null> {
+    console.log(`[MOCK] Getting instrument details for: ${instrumentName}`);
+
+    await new Promise(resolve => setTimeout(resolve, 200));
+
+    try {
+      // 解析instrument name来生成mock数据
+      const parts = instrumentName.split('-');
+      if (parts.length < 4) {
+        console.log(`[MOCK] Invalid instrument name format: ${instrumentName}`);
+        return null;
+      }
+
+      const [currency, expiry, strike, optionType] = parts;
+      const isCall = optionType === 'C';
+      const strikePrice = parseFloat(strike);
+
+      // 生成mock instrument详情
+      const mockInstrument: DeribitInstrumentDetail = {
+        instrument_name: instrumentName,
+        instrument_id: Math.floor(Math.random() * 1000000),
+        kind: 'option' as const,
+        instrument_type: 'linear' as const,
+
+        // 价格相关
+        tick_size: currency.includes('_USDC') ? 0.01 : 0.0001,
+        tick_size_steps: [],
+
+        // 交易相关
+        min_trade_amount: 0.1,
+        contract_size: currency.includes('_USDC') ? 10 : 1,
+        max_leverage: 50,
+
+        // 手续费
+        maker_commission: 0.0003,
+        taker_commission: 0.0003,
+        max_liquidation_commission: 0.005,
+
+        // 大宗交易
+        block_trade_commission: 0.00025,
+        block_trade_min_trade_amount: 10,
+        block_trade_tick_size: currency.includes('_USDC') ? 0.005 : 0.0001,
+
+        // 货币
+        base_currency: currency.includes('_') ? currency.split('_')[0] : currency,
+        counter_currency: currency.includes('_USDC') ? 'USDC' : 'USD',
+        quote_currency: currency.includes('_USDC') ? 'USDC' : 'USD',
+        settlement_currency: currency.includes('_USDC') ? 'USDC' : currency,
+
+        // 时间戳
+        creation_timestamp: Date.now() - Math.random() * 86400000 * 30,
+        expiration_timestamp: Date.now() + Math.random() * 86400000 * 30,
+
+        // 状态
+        is_active: true,
+        rfq: false,
+
+        // 期权特有字段
+        option_type: (isCall ? 'call' : 'put') as 'call' | 'put',
+        strike: strikePrice,
+
+        // 期货特有字段
+        settlement_period: 'day',
+
+        // 价格指数
+        price_index: currency.includes('_USDC')
+          ? `${currency.split('_')[0].toLowerCase()}_usdc`
+          : `${currency.toLowerCase()}_usd`
+      };
+
+      console.log(`[MOCK] Generated instrument details for ${instrumentName}`);
+      return mockInstrument;
+
+    } catch (error) {
+      console.error(`[MOCK] Error generating instrument details for ${instrumentName}:`, error);
+      return null;
+    }
   }
 
   /**
@@ -195,7 +310,7 @@ export class MockDeribitClient {
     const strike = parseFloat(parts[2]);
 
     // 生成模拟的希腊字母数据
-    const basePrice = currency === 'BTC' ? 50000 : currency === 'ETH' ? 3000 : 100;
+    const basePrice = currency === 'BTC' ? 50000 : currency === 'ETH' ? 3000 : currency === 'SOL' ? 150 : 100;
 
     // 根据实值/虚值程度生成合理的Delta值
     let delta: number;
@@ -242,8 +357,8 @@ export class MockDeribitClient {
   /**
    * Mock根据Delta值筛选最优期权 (重构版本)
    */
-  async getInstrumentByDelta(currency: string, minExpiredDays: number, delta: number, longSide: boolean): Promise<DeltaFilterResult | null> {
-    console.log(`[MOCK] Finding option by delta: ${currency}, minExpiredDays: ${minExpiredDays}, delta: ${delta}, longSide: ${longSide}`);
+  async getInstrumentByDelta(currency: string, minExpiredDays: number, delta: number, longSide: boolean, underlyingAsset?: string): Promise<DeltaFilterResult | null> {
+    console.log(`[MOCK] Finding option by delta: ${currency}, minExpiredDays: ${minExpiredDays}, delta: ${delta}, longSide: ${longSide}${underlyingAsset ? `, underlying: ${underlyingAsset}` : ''}`);
 
     await new Promise(resolve => setTimeout(resolve, 500));
 
@@ -251,9 +366,25 @@ export class MockDeribitClient {
       // 1. 获取模拟期权列表
       const instruments = await this.getInstruments(currency, 'option');
 
+      // 1.5. 如果指定了underlyingAsset，过滤出匹配的期权
+      let filteredByUnderlying = instruments;
+      if (underlyingAsset && currency === 'USDC') {
+        filteredByUnderlying = instruments.filter(instrument =>
+          instrument.instrument_name.startsWith(`${underlyingAsset}_USDC-`)
+        );
+        console.log(
+          `[MOCK] Filtered by underlying asset (${underlyingAsset}): ${filteredByUnderlying.length} instruments`
+        );
+
+        if (filteredByUnderlying.length === 0) {
+          console.log(`[MOCK] No ${underlyingAsset}_USDC instruments found`);
+          return null;
+        }
+      }
+
       // 2. 过滤期权类型
       const optionType = longSide ? 'call' : 'put';
-      const filteredInstruments = instruments.filter(
+      const filteredInstruments = filteredByUnderlying.filter(
         instrument => instrument.option_type === optionType
       );
 

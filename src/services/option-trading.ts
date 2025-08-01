@@ -459,7 +459,10 @@ export class OptionTradingService {
 
         const spreadRatio  = Math.abs(optionDetails.best_ask_price - optionDetails.best_bid_price) / (optionDetails.best_bid_price + optionDetails.best_ask_price) * 2
         console.log('盘口价差:', spreadRatio);
-        if (spreadRatio > 0.15) {
+
+        // 从环境变量读取价差比率阈值，默认0.15
+        const spreadRatioThreshold = parseFloat(process.env.SPREAD_RATIO_THRESHOLD || '0.15');
+        if (spreadRatio > spreadRatioThreshold) {
           const orderResult = await this.deribitClient.placeOrder(
             instrumentName,
             params.direction,

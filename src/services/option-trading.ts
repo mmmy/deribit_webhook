@@ -155,14 +155,10 @@ export class OptionTradingService {
             return orderResult;
           }
         } else {
-          console.warn(`⚠️ No suitable option found for delta=${payload.delta1}, using fallback`);
-          instrumentName = this.generateMockInstrumentName(params.symbol, params.direction);
-          
-          // 使用fallback合约执行开仓交易
-          const orderResult = await this.placeOptionOrder(instrumentName, params, useMockMode);
-          if (!orderResult.success) {
-            return orderResult;
-          }
+          return {
+            success: false,
+            message: `No suitable option found for delta=${payload.delta1}, minExpiredDays=${payload.n}`
+          };
         }
       } else {
         // 平仓操作或未提供delta参数时，使用原有逻辑
@@ -481,10 +477,15 @@ export class OptionTradingService {
 
         // 如果qtyType是cash，将美元金额转换为合约数量
         if (params.qtyType === 'cash') {
-          // 开仓大小 = (size / 合约价格 * 指数价格) * 合约乘数
-          // Deribit期权合约乘数通常是1
-          orderQuantity = params.quantity / (entryPrice * optionDetails.index_price);
-          console.log(`💰 Cash mode: converting $${params.quantity} to ${orderQuantity} contracts at price ${entryPrice}`);
+          if (instrumentInfo.settlement_currency === 'USDC') {
+            // USDC期权：qtyType=cash表示USDC价值，直接使用不需要换算
+            orderQuantity = params.quantity;
+            console.log(`💰 USDC Cash mode: using ${params.quantity} USDC directly as quantity`);
+          } else {
+            // 传统期权：需要根据期权价格和指数价格换算
+            orderQuantity = params.quantity / (entryPrice * optionDetails.index_price);
+            console.log(`💰 Cash mode: converting $${params.quantity} to ${orderQuantity} contracts at price ${entryPrice}`);
+          }
         }
 
         if (orderQuantity <= 0) {

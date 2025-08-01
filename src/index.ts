@@ -134,7 +134,7 @@ app.get('/api/instruments', async (req, res) => {
   try {
     const currency = req.query.currency as string || 'BTC';
     const kind = req.query.kind as string || 'option';
-    
+
     if (useMockMode) {
       const instruments = await mockClient.getInstruments(currency, kind);
       res.json({
@@ -160,6 +160,44 @@ app.get('/api/instruments', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to get instruments',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Get single instrument endpoint
+app.get('/api/instrument/:instrumentName', async (req, res) => {
+  try {
+    const instrumentName = req.params.instrumentName;
+
+    if (!instrumentName) {
+      return res.status(400).json({
+        success: false,
+        message: 'Instrument name is required'
+      });
+    }
+
+    if (useMockMode) {
+      const instrument = await mockClient.getInstrument(instrumentName);
+      res.json({
+        success: true,
+        mockMode: true,
+        instrumentName,
+        instrument
+      });
+    } else {
+      const instrument = await deribitClient.getInstrument(instrumentName);
+      res.json({
+        success: true,
+        mockMode: false,
+        instrumentName,
+        instrument
+      });
+    }
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get instrument',
       error: error instanceof Error ? error.message : 'Unknown error'
     });
   }

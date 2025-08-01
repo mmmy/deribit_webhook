@@ -67,8 +67,8 @@ if (payload.marketPosition === 'flat' && payload.prevMarketPosition !== 'flat') 
 
 ```typescript
 if (params.action === 'open' && payload.delta1 !== undefined && payload.n !== undefined) {
-  // 提取货币类型: BTCUSDT -> BTC
-  const currency = params.symbol.replace(/USDT?/i, '').toUpperCase();
+  // 提取货币类型: BTCUSDT -> BTC, SOLUSDC -> SOL
+  const currency = params.symbol.replace(/USD[TC]?/i, '').toUpperCase();
   
   // 确定期权类型: buy=call, sell=put
   const longSide = params.direction === 'buy';

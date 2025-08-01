@@ -6,6 +6,7 @@ import type {
   DeribitPosition,
   OptionDetails,
 } from "../types";
+import type { DeribitInstrumentDetail } from "../types/deribit-instrument";
 
 export class DeribitClient {
   private configLoader: ConfigLoader;
@@ -84,6 +85,23 @@ export class DeribitClient {
   }
 
   /**
+   * 获取单个工具的详细信息
+   * @param instrumentName 工具名称，如 BTC-PERPETUAL, BTC-25MAR23-50000-C
+   * @returns 工具详细信息
+   */
+  async getInstrument(instrumentName: string): Promise<DeribitInstrumentDetail | null> {
+    try {
+      const result = await this.publicAPI.getInstrument({
+        instrument_name: instrumentName
+      });
+      return result || null;
+    } catch (error) {
+      console.error(`Failed to get instrument ${instrumentName}:`, error);
+      return null;
+    }
+  }
+
+  /**
    * 获取期权详细信息
    * @param instrumentName 期权合约名称
    * @returns 期权详细信息
@@ -111,17 +129,19 @@ export class DeribitClient {
    * @param minExpiredDays 最小到期天数
    * @param delta 目标Delta值
    * @param longSide 是否为多头方向 (true=call, false=put)
+   * @param underlyingAsset 可选的标的资产，用于USDC期权筛选
    * @returns 最优期权合约
    */
   async getInstrumentByDelta(
     currency: string,
     minExpiredDays: number,
     delta: number,
-    longSide: boolean
+    longSide: boolean,
+    underlyingAsset?: string
   ): Promise<DeltaFilterResult | null> {
     try {
       console.log(
-        `🔍 Finding option by delta: ${currency}, minExpiredDays: ${minExpiredDays}, delta: ${delta}, longSide: ${longSide}`
+        `🔍 Finding option by delta: ${currency}, minExpiredDays: ${minExpiredDays}, delta: ${delta}, longSide: ${longSide}${underlyingAsset ? `, underlying: ${underlyingAsset}` : ''}`
       );
 
       // 1. 使用getInstruments接口获取数据
@@ -131,9 +151,25 @@ export class DeribitClient {
         return null;
       }
 
+      // 1.5. 如果指定了underlyingAsset，过滤出匹配的期权
+      let filteredByUnderlying = instruments;
+      if (underlyingAsset && currency === 'USDC') {
+        filteredByUnderlying = instruments.filter(instrument =>
+          instrument.instrument_name.startsWith(`${underlyingAsset}_USDC-`)
+        );
+        console.log(
+          `📊 Filtered by underlying asset (${underlyingAsset}): ${filteredByUnderlying.length} instruments`
+        );
+
+        if (filteredByUnderlying.length === 0) {
+          console.log(`❌ No ${underlyingAsset}_USDC instruments found`);
+          return null;
+        }
+      }
+
       // 2. 过滤: longSide=true过滤call, 否则过滤put
       const optionType = longSide ? "call" : "put";
-      let filteredInstruments = instruments.filter(
+      let filteredInstruments = filteredByUnderlying.filter(
         (instrument) => instrument.option_type === optionType
       );
       console.log(

@@ -3,12 +3,12 @@ import { ConfigLoader } from '../config';
 import { DeltaManager } from '../database/delta-manager';
 import { DeltaRecordType } from '../database/types';
 import {
-  DeribitOptionInstrument,
   DeribitPosition,
   OptionTradingParams,
   OptionTradingResult,
   WebhookSignalPayload
 } from '../types';
+import type { DeribitInstrumentDetail } from '../types/deribit-instrument';
 import type { DetailedPositionInfo, ExecutionStats, OpenOrderInfo, PositionInfo } from '../types/position-info';
 import { DeribitAuth } from './auth';
 import { DeribitClient } from './deribit-client';
@@ -128,20 +128,21 @@ export class OptionTradingService {
       // 如果是开仓操作且提供了delta1和n参数，使用getInstrumentByDelta选择期权
       if (params.action === 'open' && payload.delta1 !== undefined && payload.n !== undefined) {
         console.log(`🎯 Using delta-based option selection: delta=${payload.delta1}, minExpiredDays=${payload.n}`);
-        
-        // 提取货币类型
-        const currency = params.symbol.replace(/USDT?/i, '').toUpperCase();
-        
+
+        // 解析symbol以确定currency和underlying
+        const { currency, underlying } = this.parseSymbolForOptions(params.symbol);
+        console.log(`📊 Parsed symbol ${params.symbol} → currency: ${currency}, underlying: ${underlying}`);
+
         // 确定longSide (true=call, false=put)
         // 简化逻辑: buy方向选择call期权，sell方向选择put期权
         const longSide = params.direction === 'buy';
-        
+
         // 调用getInstrumentByDelta
         let deltaResult;
         if (useMockMode) {
-          deltaResult = await this.mockClient.getInstrumentByDelta(currency, payload.n, payload.delta1, longSide);
+          deltaResult = await this.mockClient.getInstrumentByDelta(currency, payload.n, payload.delta1, longSide, underlying);
         } else {
-          deltaResult = await this.deribitClient.getInstrumentByDelta(currency, payload.n, payload.delta1, longSide);
+          deltaResult = await this.deribitClient.getInstrumentByDelta(currency, payload.n, payload.delta1, longSide, underlying);
         }
         
         if (deltaResult) {
@@ -195,15 +196,63 @@ export class OptionTradingService {
   }
 
   /**
+   * 解析symbol以确定currency和underlying
+   * 支持USDT和USDC期权
+   */
+  private parseSymbolForOptions(symbol: string): { currency: string; underlying: string } {
+    const upperSymbol = symbol.toUpperCase();
+
+    // 检查是否为USDC期权
+    if (upperSymbol.endsWith('USDC')) {
+      const underlying = upperSymbol.replace(/USDC$/i, '');
+      return {
+        currency: 'USDC',
+        underlying: underlying
+      };
+    }
+
+    // 检查是否为USDT期权（向后兼容）
+    if (upperSymbol.endsWith('USDT')) {
+      const underlying = upperSymbol.replace(/USDT$/i, '');
+      return {
+        currency: underlying, // USDT期权使用underlying作为currency
+        underlying: underlying
+      };
+    }
+
+    // 检查是否为USD期权（向后兼容）
+    if (upperSymbol.endsWith('USD')) {
+      const underlying = upperSymbol.replace(/USD$/i, '');
+      return {
+        currency: underlying, // USD期权使用underlying作为currency
+        underlying: underlying
+      };
+    }
+
+    // 默认情况：假设整个symbol就是currency
+    return {
+      currency: upperSymbol,
+      underlying: upperSymbol
+    };
+  }
+
+  /**
    * 生成模拟的期权合约名称
    */
   private generateMockInstrumentName(symbol: string, direction: 'buy' | 'sell'): string {
-    const currency = symbol.replace(/USDT?/i, '').toUpperCase();
+    const { currency, underlying } = this.parseSymbolForOptions(symbol);
     const expiry = this.getNextFridayExpiry();
-    const strike = this.estimateStrike(currency);
+    const strike = this.estimateStrike(underlying);
     const optionType = direction === 'buy' ? 'C' : 'P'; // 简化逻辑：买入用看涨，卖出用看跌
-    
-    return `${currency}-${expiry}-${strike}-${optionType}`;
+
+    // 根据currency类型生成不同格式的instrument name
+    if (currency === 'USDC') {
+      // USDC期权使用下划线格式: SOL_USDC-expiry-strike-type
+      return `${underlying}_USDC-${expiry}-${strike}-${optionType}`;
+    } else {
+      // 传统期权使用连字符格式: BTC-expiry-strike-type
+      return `${underlying}-${expiry}-${strike}-${optionType}`;
+    }
   }
 
   /**
@@ -231,9 +280,9 @@ export class OptionTradingService {
     const strikes = {
       'BTC': 50000,
       'ETH': 3000,
-      'SOL': 100
+      'SOL': 150
     };
-    
+
     return strikes[currency as keyof typeof strikes] || 1000;
   }
 
@@ -261,7 +310,7 @@ export class OptionTradingService {
    */
   private correctOrderPrice(
     price: number,
-    instrumentDetail: DeribitOptionInstrument
+    instrumentDetail: DeribitInstrumentDetail
   ): { correctedPrice: number; tickSize: number; priceSteps: string } {
     const {
       tick_size: baseTickSize,
@@ -303,7 +352,7 @@ export class OptionTradingService {
    */
   private correctOrderAmount(
     amount: number,
-    instrumentDetail: DeribitOptionInstrument
+    instrumentDetail: DeribitInstrumentDetail
   ): { correctedAmount: number; minTradeAmount: number; amountSteps: string } {
     const {
       min_trade_amount: minTradeAmount,
@@ -339,7 +388,7 @@ export class OptionTradingService {
   private correctOrderParams(
     price: number,
     amount: number,
-    instrumentDetail: DeribitOptionInstrument
+    instrumentDetail: DeribitInstrumentDetail
   ) {
     // 分别修正价格和数量
     const priceResult = this.correctOrderPrice(price, instrumentDetail);
@@ -411,11 +460,7 @@ export class OptionTradingService {
         
         // 2. 获取期权工具信息（包含tick_size等）和价格信息
         // 2.1 获取期权工具信息
-        const instruments = await this.deribitClient.getInstruments(
-          instrumentName.split('-')[0], // 提取货币类型，如BTC
-          'option'
-        );
-        const instrumentInfo = instruments.find(inst => inst.instrument_name === instrumentName);
+        const instrumentInfo = await this.deribitClient.getInstrument(instrumentName);
         if (!instrumentInfo) {
           throw new Error(`Failed to get instrument info for ${instrumentName}`);
         }
@@ -719,7 +764,7 @@ export class OptionTradingService {
     quantity: number;
     initialPrice: number;
     accountName: string;
-    instrumentDetail: DeribitOptionInstrument; // 新增：工具详情，用于价格修正
+    instrumentDetail: DeribitInstrumentDetail; // 新增：工具详情，用于价格修正
     timeout?: number;
     maxStep?: number;
   }): Promise<{

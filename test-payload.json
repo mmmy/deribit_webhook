@@ -1,0 +1,18 @@
+{
+  "accountName": "yqtest",
+  "side": "buy",
+  "symbol": "SOLUSDC",
+  "size": "1000",
+  "qtyType": "cash",
+  "delta1": 0.7,
+  "n": 2,
+  "marketPosition": "long",
+  "prevMarketPosition": "flat",
+  "exchange": "DERIBIT",
+  "period": "5",
+  "price": "150.50",
+  "timestamp": "1754043492369",
+  "positionSize": "0",
+  "id": "test_sol_usdc",
+  "tv_id": 12345
+}

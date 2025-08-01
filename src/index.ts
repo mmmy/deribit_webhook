@@ -7,7 +7,7 @@ import path from 'path';
 import { DeribitPrivateAPI, createAuthInfo, getConfigByEnvironment } from './api';
 import { CreateDeltaRecordInput, DeltaManager, DeltaRecord, DeltaRecordType } from './database';
 import { ConfigLoader, DeribitAuth, DeribitClient, MockDeribitClient, OptionTradingService, WebhookResponse, WebhookSignalPayload } from './services';
-import { DeribitPosition } from './types';
+import { DeribitPosition, OptionTradingParams } from './types';
 
 // Load environment variables
 dotenv.config();
@@ -1079,16 +1079,19 @@ async function executePositionAdjustment(params: {
     console.log(`📈 [${requestId}] Opening new position: ${deltaResult.instrument.instrument_name}`);
 
     const newDirection = deltaRecord.move_position_delta > 0 ? 'buy' : 'sell';
-    const newQuantity = Math.abs(deltaRecord.move_position_delta);
+    const newQuantity = Math.abs(currentPosition.size);
 
     // 构造 OptionTradingParams
-    const tradingParams: any = {
+    const tradingParams: OptionTradingParams = {
       symbol: currency,
       action: 'open',
       direction: newDirection,
       quantity: newQuantity,
       orderType: 'limit',
-      accountName: accountName
+      accountName: accountName,
+      delta1: deltaRecord.move_position_delta,
+      delta2: deltaRecord.target_delta,
+      n: deltaRecord.min_expire_days || undefined
     };
 
     // 检查是否使用Mock模式

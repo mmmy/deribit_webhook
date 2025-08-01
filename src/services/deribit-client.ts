@@ -217,7 +217,7 @@ export class DeribitClient {
       }
 
       // 4. 遍历最近的两个到期日，每个到期日选择2个最接近目标Delta的期权
-      const candidateOptions: DeltaFilterResult[] = [];
+      let candidateOptions: DeltaFilterResult[] = [];
 
       for (const expiryTimestamp of nearestTwoExpiries) {
         const instrumentsForExpiry = expiryGroups.get(expiryTimestamp)!;
@@ -281,12 +281,16 @@ export class DeribitClient {
               option.instrument.instrument_name
             } (Delta: ${option.details.greeks.delta.toFixed(
               3
-            )}, Distance: ${option.deltaDistance.toFixed(3)})`
+            )}, Distance: ${option.deltaDistance.toFixed(3)}), 盘口价差比例: ${(
+              option.spreadRatio * 100
+            ).toFixed(2)}%`
           );
         });
 
         candidateOptions.push(...top2ForExpiry);
       }
+
+      candidateOptions = candidateOptions.filter(op => op.spreadRatio < 1 && op.spreadRatio > 0)
 
       if (candidateOptions.length === 0) {
         console.log("❌ No candidate options found with valid delta data");

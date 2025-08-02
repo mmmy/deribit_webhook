@@ -38,8 +38,11 @@ coverage/
 *.swo
 
 # Database files
+data/*.db
 data/*.db-wal
 data/*.db-shm
+*.db
+delta_records.db
 
 # OS generated files
 .DS_Store

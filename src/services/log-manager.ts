@@ -43,6 +43,10 @@ export class LogManager {
       path.join(process.cwd(), '..', 'logs', 'combined.log'),
       path.join(process.cwd(), '..', 'logs', 'out.log'),
       path.join(process.cwd(), '..', 'logs', 'error.log'),
+      // PM2日志轮转文件路径
+      path.join(process.cwd(), '..', 'logs', 'combined-0.log'),
+      path.join(process.cwd(), '..', 'logs', 'out-0.log'),
+      path.join(process.cwd(), '..', 'logs', 'error-0.log'),
       // PM2日志路径
       path.join(homeDir, 'logs', 'combined.log'),
       path.join(homeDir, 'logs', 'out.log'),
@@ -61,16 +65,87 @@ export class LogManager {
   }
 
   /**
+   * 扫描目录中的PM2日志轮转文件
+   */
+  private scanLogRotateFiles(logDir: string): string[] {
+    const rotateFiles: string[] = [];
+
+    if (!fs.existsSync(logDir)) {
+      return rotateFiles;
+    }
+
+    try {
+      const files = fs.readdirSync(logDir);
+
+      // 匹配 PM2 日志轮转文件格式: combined-0.log, combined-1.log, out-0.log, error-0.log 等
+      const logRotatePattern = /^(combined|out|error)-\d+\.log$/;
+
+      files.forEach(file => {
+        if (logRotatePattern.test(file)) {
+          const fullPath = path.join(logDir, file);
+          if (fs.statSync(fullPath).isFile()) {
+            rotateFiles.push(fullPath);
+          }
+        }
+      });
+
+      // 按文件名排序，确保最新的文件在前面（combined-0.log 是最新的）
+      rotateFiles.sort((a, b) => {
+        const aMatch = path.basename(a).match(/(\w+)-(\d+)\.log$/);
+        const bMatch = path.basename(b).match(/(\w+)-(\d+)\.log$/);
+
+        if (aMatch && bMatch) {
+          const aType = aMatch[1];
+          const bType = bMatch[1];
+          const aNum = parseInt(aMatch[2]);
+          const bNum = parseInt(bMatch[2]);
+
+          // 先按类型排序，再按数字排序（数字小的在前）
+          if (aType !== bType) {
+            return aType.localeCompare(bType);
+          }
+          return aNum - bNum;
+        }
+
+        return a.localeCompare(b);
+      });
+
+    } catch (error) {
+      console.warn(`⚠️ 扫描日志轮转文件失败: ${logDir}`, error);
+    }
+
+    return rotateFiles;
+  }
+
+  /**
    * 获取可用的日志文件列表
    */
   public getAvailableLogFiles(): string[] {
-    return this.logPaths.filter(logPath => {
+    const availableFiles: string[] = [];
+
+    // 1. 检查预定义的日志文件路径
+    const staticFiles = this.logPaths.filter(logPath => {
       try {
         return fs.existsSync(logPath) && fs.statSync(logPath).isFile();
       } catch {
         return false;
       }
     });
+
+    availableFiles.push(...staticFiles);
+
+    // 2. 扫描生产环境日志目录中的PM2轮转文件
+    const productionLogDir = path.join(process.cwd(), '..', 'logs');
+    const rotateFiles = this.scanLogRotateFiles(productionLogDir);
+    availableFiles.push(...rotateFiles);
+
+    // 3. 扫描开发环境日志目录中的轮转文件
+    const devLogDir = path.join(process.cwd(), 'logs');
+    const devRotateFiles = this.scanLogRotateFiles(devLogDir);
+    availableFiles.push(...devRotateFiles);
+
+    // 去重
+    return [...new Set(availableFiles)];
   }
 
   /**

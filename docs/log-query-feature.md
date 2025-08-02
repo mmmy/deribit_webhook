@@ -102,12 +102,24 @@ GET /api/logs?keyword=error&maxRecords=50
 
 系统会自动搜索以下路径的日志文件：
 
-1. **项目目录**
+1. **开发环境目录**
    - `./logs/combined.log`
    - `./logs/out.log`
    - `./logs/error.log`
 
-2. **用户主目录**
+2. **生产环境目录**
+   - `../logs/combined.log`
+   - `../logs/out.log`
+   - `../logs/error.log`
+
+3. **PM2日志轮转文件**
+   - `../logs/combined-0.log` (最新)
+   - `../logs/combined-1.log`
+   - `../logs/out-0.log`
+   - `../logs/error-0.log`
+   - 自动扫描所有轮转文件
+
+4. **用户主目录**
    - `~/logs/combined.log`
    - `~/logs/out.log`
    - `~/logs/error.log`
@@ -129,12 +141,40 @@ GET /api/logs?keyword=error&maxRecords=50
 2025-01-02T10:30:15.123Z 🚀 Deribit Options Trading Microservice running on port 3000
 ```
 
+## PM2日志轮转支持
+
+系统支持PM2的`pm2-logrotate`插件产生的轮转日志文件：
+
+### 轮转文件格式
+- `combined-0.log` - 最新的日志文件
+- `combined-1.log` - 第一次轮转的文件
+- `combined-2.log` - 第二次轮转的文件
+- 以此类推...
+
+### 自动发现机制
+1. **智能扫描**：自动扫描日志目录中的所有轮转文件
+2. **排序优化**：按文件新旧程度排序，优先读取最新文件
+3. **类型识别**：支持combined、out、error三种类型的轮转文件
+4. **去重处理**：避免重复读取相同的日志文件
+
+### 配置建议
+```bash
+# 安装PM2日志轮转插件
+pm2 install pm2-logrotate
+
+# 配置轮转参数
+pm2 set pm2-logrotate:max_size 10M
+pm2 set pm2-logrotate:retain 7
+pm2 set pm2-logrotate:compress true
+```
+
 ## 性能优化
 
 1. **流式读取**：使用readline逐行读取，避免内存溢出
 2. **时间过滤**：在读取过程中进行时间筛选，减少内存使用
 3. **结果限制**：最大1000条记录限制，防止响应过大
 4. **缓存机制**：文件状态检查缓存，提高查询效率
+5. **轮转文件优化**：优先读取最新的轮转文件，提高查询效率
 
 ## 错误处理
 

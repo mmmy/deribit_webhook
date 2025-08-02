@@ -387,6 +387,38 @@
     </style>
 </head>
 <body>
+    <!-- 引入 axios 库 - 多个备用 CDN -->
+    <script>
+        // 尝试多个 CDN 源
+        const cdnUrls = [
+            'https://unpkg.com/axios@1.6.0/dist/axios.min.js',
+            'https://cdn.bootcdn.net/ajax/libs/axios/1.6.0/axios.min.js',
+            'https://cdnjs.cloudflare.com/ajax/libs/axios/1.6.0/axios.min.js'
+        ];
+
+        let currentCdnIndex = 0;
+
+        function loadAxios() {
+            if (currentCdnIndex >= cdnUrls.length) {
+                console.error('所有 axios CDN 都加载失败，将使用 fetch 作为备用方案');
+                return;
+            }
+
+            const script = document.createElement('script');
+            script.src = cdnUrls[currentCdnIndex];
+            script.onload = function() {
+                console.log(`axios 加载成功，使用 CDN: ${cdnUrls[currentCdnIndex]}`);
+            };
+            script.onerror = function() {
+                console.warn(`CDN 加载失败: ${cdnUrls[currentCdnIndex]}`);
+                currentCdnIndex++;
+                loadAxios();
+            };
+            document.head.appendChild(script);
+        }
+
+        loadAxios();
+    </script>
     <div class="container">
         <div class="header">
             <h1>🎯 Delta管理器</h1>
@@ -666,6 +698,83 @@
     </button>
 
     <script>
+        // 创建统一的 HTTP 客户端（支持 axios 和 fetch 备用方案）
+        const httpClient = {
+            async get(url) {
+                if (typeof axios !== 'undefined') {
+                    return await axios.get(url);
+                } else {
+                    console.warn('axios 未加载，使用 fetch 备用方案');
+                    const response = await fetch(url);
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    return { data: await response.json() };
+                }
+            },
+
+            async post(url, data) {
+                if (typeof axios !== 'undefined') {
+                    return await axios.post(url, data);
+                } else {
+                    console.warn('axios 未加载，使用 fetch 备用方案');
+                    const response = await fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(data)
+                    });
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    return { data: await response.json() };
+                }
+            },
+
+            async put(url, data) {
+                if (typeof axios !== 'undefined') {
+                    return await axios.put(url, data);
+                } else {
+                    console.warn('axios 未加载，使用 fetch 备用方案');
+                    const response = await fetch(url, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(data)
+                    });
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    return { data: await response.json() };
+                }
+            }
+        };
+
+        // 如果 axios 加载成功，配置默认设置
+        setTimeout(() => {
+            if (typeof axios !== 'undefined') {
+                axios.defaults.timeout = 30000; // 30秒超时
+                axios.defaults.headers.common['Content-Type'] = 'application/json';
+
+                // axios 响应拦截器，统一处理错误
+                axios.interceptors.response.use(
+                    response => response,
+                    error => {
+                        if (error.response) {
+                            // 服务器返回错误状态码
+                            const message = error.response.data?.message || `HTTP ${error.response.status}: ${error.response.statusText}`;
+                            throw new Error(message);
+                        } else if (error.request) {
+                            // 请求发出但没有收到响应
+                            throw new Error('网络连接失败，请检查网络或服务器状态');
+                        } else {
+                            // 其他错误
+                            throw new Error(error.message);
+                        }
+                    }
+                );
+                console.log('axios 配置完成');
+            }
+        }, 1000); // 等待1秒确保 axios 加载完成
+
         // 全局变量
         let currentAccount = '';
         let deltaRecords = [];
@@ -788,8 +897,8 @@
         // 加载账户列表
         async function loadAccounts() {
             try {
-                const response = await fetch('/api/status');
-                const data = await response.json();
+                const response = await httpClient.get('/api/status');
+                const data = response.data;
                 
                 // 这里需要获取实际的账户列表，暂时使用硬编码
                 const accounts = ['yqtest', 'main']; // 从配置中获取
@@ -837,20 +946,12 @@
             try {
                 // 并行加载Delta记录和实时数据
                 const [deltaResponse, liveResponse] = await Promise.all([
-                    fetch(`/api/delta/${currentAccount}`),
-                    fetch(`/api/delta/${currentAccount}/live-data`)
+                    httpClient.get(`/api/delta/${currentAccount}`),
+                    httpClient.get(`/api/delta/${currentAccount}/live-data`)
                 ]);
 
-                if (!deltaResponse.ok) {
-                    throw new Error(`获取Delta记录失败: ${deltaResponse.statusText}`);
-                }
-                
-                if (!liveResponse.ok) {
-                    throw new Error(`获取实时数据失败: ${liveResponse.statusText}`);
-                }
-
-                const deltaData = await deltaResponse.json();
-                const liveData = await liveResponse.json();
+                const deltaData = deltaResponse.data;
+                const liveData = liveResponse.data;
 
                 if (!deltaData.success) {
                     throw new Error(deltaData.message);
@@ -1167,22 +1268,14 @@
                 let response;
                 if (editingRecordId) {
                     // 更新记录
-                    response = await fetch(`/api/delta/${currentAccount}/${editingRecordId}`, {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(formData)
-                    });
+                    response = await httpClient.put(`/api/delta/${currentAccount}/${editingRecordId}`, formData);
                 } else {
                     // 创建记录
-                    response = await fetch(`/api/delta/${currentAccount}`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(formData)
-                    });
+                    response = await httpClient.post(`/api/delta/${currentAccount}`, formData);
                 }
 
-                const result = await response.json();
-                
+                const result = response.data;
+
                 if (!result.success) {
                     throw new Error(result.message);
                 }
@@ -1352,8 +1445,8 @@
             try {
                 console.log(`🔄 刷新所有品种期权实时数据...`);
 
-                const response = await fetch(`/api/delta/${currentAccount}/live-data`);
-                const data = await response.json();
+                const response = await httpClient.get(`/api/delta/${currentAccount}/live-data`);
+                const data = response.data;
 
                 if (!data.success) {
                     throw new Error(data.message);
@@ -1576,13 +1669,9 @@
             }
 
             try {
-                const response = await fetch(`/api/delta/${currentAccount}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(formData)
-                });
+                const response = await httpClient.post(`/api/delta/${currentAccount}`, formData);
 
-                const result = await response.json();
+                const result = response.data;
 
                 if (!result.success) {
                     throw new Error(result.message);
@@ -1674,13 +1763,9 @@
             };
 
             try {
-                const response = await fetch(`/api/delta/${currentAccount}/${window.currentEditingRecord.id}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(updateData)
-                });
+                const response = await httpClient.put(`/api/delta/${currentAccount}/${window.currentEditingRecord.id}`, updateData);
 
-                const result = await response.json();
+                const result = response.data;
 
                 if (!result.success) {
                     throw new Error(result.message);

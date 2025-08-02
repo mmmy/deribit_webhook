@@ -436,26 +436,42 @@
             try {
                 const response = await httpClient.get('/api/status');
                 const data = response.data;
-                
-                // 这里需要从实际的API获取账户列表
-                // 暂时使用硬编码的账户
-                const accounts = ['yqtest', 'main'];
-                
+
+                // 从API响应中提取账户列表
+                let accounts = [];
+                if (data.accounts && Array.isArray(data.accounts)) {
+                    accounts = data.accounts.map(acc => acc.name || acc);
+                    console.log(`📋 从API获取到 ${accounts.length} 个账户:`, accounts);
+                } else {
+                    console.warn('API未返回accounts字段');
+                    accounts = [];
+                }
+
                 const accountsGrid = document.getElementById('accountsGrid');
                 accountsGrid.innerHTML = '';
-                
-                accounts.forEach(account => {
-                    const accountCard = document.createElement('div');
-                    accountCard.className = 'account-card';
-                    accountCard.innerHTML = `
-                        <h4>📊 ${account}</h4>
-                        <p>点击管理Delta记录</p>
-                        <a href="/delta?account=${account}" class="btn success">
-                            管理Delta
-                        </a>
+
+                if (accounts.length === 0) {
+                    const noAccountCard = document.createElement('div');
+                    noAccountCard.className = 'account-card';
+                    noAccountCard.innerHTML = `
+                        <h4>⚠️ 未找到可用账户</h4>
+                        <p>请检查服务器配置</p>
                     `;
-                    accountsGrid.appendChild(accountCard);
-                });
+                    accountsGrid.appendChild(noAccountCard);
+                } else {
+                    accounts.forEach(account => {
+                        const accountCard = document.createElement('div');
+                        accountCard.className = 'account-card';
+                        accountCard.innerHTML = `
+                            <h4>📊 ${account}</h4>
+                            <p>点击管理Delta记录</p>
+                            <a href="/delta?account=${account}" class="btn success">
+                                管理Delta
+                            </a>
+                        `;
+                        accountsGrid.appendChild(accountCard);
+                    });
+                }
                 
             } catch (error) {
                 console.error('Failed to load accounts:', error);

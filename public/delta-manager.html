@@ -794,20 +794,29 @@
         let availableAccounts = [];
 
         // 页面加载时初始化
-        document.addEventListener('DOMContentLoaded', function() {
-            loadAccounts();
+        document.addEventListener('DOMContentLoaded', async function() {
+            // 显示初始化状态
+            showLoading('正在初始化账户列表...');
+
+            // 先加载账户列表，再处理URL参数
+            await loadAccounts();
 
             // 从URL参数获取账户ID
             const urlParams = new URLSearchParams(window.location.search);
             const accountId = urlParams.get('account');
             if (accountId) {
-                // 先检查账户是否存在，再设置选择框
-                if (availableAccounts.includes(accountId)) {
+                // 检查账户是否存在
+                if (availableAccounts.length > 0 && availableAccounts.includes(accountId)) {
                     document.getElementById('accountSelect').value = accountId;
                     selectAccount(accountId);
-                } else {
+                } else if (availableAccounts.length > 0) {
                     // 账户不存在，显示错误并清理URL
                     showError(`URL中指定的账户 "${accountId}" 不存在。可用账户: ${availableAccounts.join(', ')}`);
+                    const url = new URL(window.location);
+                    url.searchParams.delete('account');
+                    window.history.replaceState({}, '', url);
+                } else {
+                    // 没有可用账户，清理URL但不显示账户不存在的错误
                     const url = new URL(window.location);
                     url.searchParams.delete('account');
                     window.history.replaceState({}, '', url);
@@ -947,7 +956,7 @@
                         select.appendChild(option);
                     });
                 }
-                
+
                 select.addEventListener('change', function() {
                     if (this.value) {
                         selectAccount(this.value);
@@ -957,9 +966,14 @@
                         window.history.pushState({}, '', url);
                     }
                 });
-                
+
             } catch (error) {
                 showError('加载账户列表失败: ' + error.message);
+            } finally {
+                // 如果没有选择账户，隐藏加载状态
+                if (!currentAccount) {
+                    hideLoading();
+                }
             }
         }
 
@@ -1564,8 +1578,10 @@
         }
 
         // 工具函数
-        function showLoading() {
-            document.getElementById('loadingMessage').style.display = 'block';
+        function showLoading(message = '🔄 正在加载数据...') {
+            const loadingElement = document.getElementById('loadingMessage');
+            loadingElement.innerHTML = `<h3>${message}</h3>`;
+            loadingElement.style.display = 'block';
             document.getElementById('mainContent').style.display = 'none';
             document.getElementById('errorMessage').style.display = 'none';
             document.getElementById('successMessage').style.display = 'none';

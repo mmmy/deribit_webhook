@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>时序修复测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .test-link {
+            display: block;
+            margin: 10px 0;
+            padding: 10px;
+            background: #f5f5f5;
+            text-decoration: none;
+            color: #333;
+            border-radius: 3px;
+        }
+        .test-link:hover {
+            background: #e5e5e5;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        .success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .info {
+            background: #d1ecf1;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔧 Delta 管理器时序修复测试</h1>
+    
+    <div class="test-section">
+        <h2>📋 修复内容</h2>
+        <ul>
+            <li>✅ 页面初始化时先等待账户列表加载完成</li>
+            <li>✅ 然后再处理 URL 参数中的账户验证</li>
+            <li>✅ 添加初始化加载状态提示</li>
+            <li>✅ 优化错误处理逻辑</li>
+        </ul>
+    </div>
+    
+    <div class="test-section">
+        <h2>🧪 测试步骤</h2>
+        <ol>
+            <li>点击下面的测试链接</li>
+            <li>观察页面是否显示 "正在初始化账户列表..." 提示</li>
+            <li>检查是否正确识别有效/无效账户</li>
+            <li>验证错误消息是否包含完整的可用账户列表</li>
+        </ol>
+    </div>
+    
+    <div class="test-section">
+        <h2>🎯 测试链接</h2>
+        <div id="testLinks">
+            <p>正在生成测试链接...</p>
+        </div>
+    </div>
+    
+    <div class="test-section">
+        <h2>📊 预期行为</h2>
+        <div class="status info">
+            <strong>正确行为</strong>:
+            <ul>
+                <li>页面加载时显示 "正在初始化账户列表..." 提示</li>
+                <li>有效账户: 正常加载 Delta 管理器</li>
+                <li>无效账户: 显示完整的错误消息，包含所有可用账户</li>
+                <li>URL 参数被正确清理</li>
+            </ul>
+        </div>
+        
+        <div class="status error">
+            <strong>之前的问题</strong>:
+            <ul>
+                <li>错误消息: "可用账户: " (空列表)</li>
+                <li>原因: URL 参数检查在账户列表加载之前执行</li>
+            </ul>
+        </div>
+    </div>
+    
+    <div class="test-section">
+        <h2>🔄 返回</h2>
+        <a href="/" class="test-link">← 返回主页</a>
+        <a href="/delta" class="test-link">← 返回 Delta 管理器</a>
+    </div>
+
+    <script>
+        // 动态生成测试链接
+        async function generateTestLinks() {
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+                
+                const testLinksDiv = document.getElementById('testLinks');
+                let html = '';
+                
+                if (data.accounts && Array.isArray(data.accounts) && data.accounts.length > 0) {
+                    const accounts = data.accounts.map(acc => acc.name || acc);
+                    
+                    html += '<h3>✅ 有效账户测试</h3>';
+                    accounts.forEach(account => {
+                        html += `<a href="/delta?account=${account}" class="test-link">
+                            /delta?account=${account} (有效)
+                        </a>`;
+                    });
+                    
+                    html += '<h3>❌ 无效账户测试</h3>';
+                    const invalidAccounts = ['nonexistent', 'invalid_user', 'test123'];
+                    invalidAccounts.forEach(account => {
+                        html += `<a href="/delta?account=${account}" class="test-link">
+                            /delta?account=${account} (无效)
+                        </a>`;
+                    });
+                } else {
+                    html = '<div class="status error">⚠️ 未找到可用账户，请检查服务器配置</div>';
+                }
+                
+                testLinksDiv.innerHTML = html;
+            } catch (error) {
+                document.getElementById('testLinks').innerHTML = 
+                    `<div class="status error">❌ 加载测试链接失败: ${error.message}</div>`;
+            }
+        }
+        
+        // 页面加载时执行
+        document.addEventListener('DOMContentLoaded', generateTestLinks);
+    </script>
+</body>
+</html>

@@ -13,3 +13,6 @@ export { WeChatNotificationService, wechatNotification } from './wechat-notifica
 // 导出数据库模块
 export * from '../database';
 
+// 导出日志管理模块
+export { LogManager } from './log-manager';
+

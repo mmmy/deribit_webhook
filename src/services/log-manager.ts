@@ -35,9 +35,14 @@ export class LogManager {
     // 定义可能的日志文件路径
     const homeDir = process.env.HOME || process.env.USERPROFILE || process.cwd();
     this.logPaths = [
+      // 开发环境日志路径
       path.join(process.cwd(), 'logs', 'combined.log'),
       path.join(process.cwd(), 'logs', 'out.log'),
       path.join(process.cwd(), 'logs', 'error.log'),
+      // 生产环境日志路径
+      path.join(process.cwd(), '..', 'logs', 'combined.log'),
+      path.join(process.cwd(), '..', 'logs', 'out.log'),
+      path.join(process.cwd(), '..', 'logs', 'error.log'),
       // PM2日志路径
       path.join(homeDir, 'logs', 'combined.log'),
       path.join(homeDir, 'logs', 'out.log'),
@@ -80,7 +85,7 @@ export class LogManager {
     // 1. Morgan格式: IP - - [timestamp] "method url" status size "referer" "user-agent"
     const morganMatch = line.match(/^(\S+) - - \[([^\]]+)\] "([^"]*)" (\d+) (\S+) "([^"]*)" "([^"]*)"/);
     if (morganMatch) {
-      const [, ip, timestamp, request, status, size, referer, userAgent] = morganMatch;
+      const [, , timestamp, request, status, size] = morganMatch;
       return {
         timestamp: this.parseMorganTimestamp(timestamp),
         level: parseInt(status) >= 400 ? 'ERROR' : 'INFO',
@@ -128,8 +133,8 @@ export class LogManager {
   private parseMorganTimestamp(timestamp: string): string {
     // Morgan格式: 25/Dec/2023:10:30:45 +0000
     try {
-      const date = new Date(timestamp.replace(/(\d{2})\/(\w{3})\/(\d{4}):(\d{2}):(\d{2}):(\d{2}) ([+-]\d{4})/, 
-        (match, day, month, year, hour, min, sec, tz) => {
+      const date = new Date(timestamp.replace(/(\d{2})\/(\w{3})\/(\d{4}):(\d{2}):(\d{2}):(\d{2}) ([+-]\d{4})/,
+        (_, day, month, year, hour, min, sec, tz) => {
           const months: { [key: string]: string } = {
             'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04',
             'May': '05', 'Jun': '06', 'Jul': '07', 'Aug': '08',

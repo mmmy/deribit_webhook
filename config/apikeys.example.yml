@@ -9,10 +9,18 @@ accounts:
     clientId: "your_client_id_here"          # Public identifier (from API settings)
     clientSecret: "your_client_secret_here"  # Private secret key (keep confidential)
     enabled: true
-    
+
     # Optional authentication settings
     grantType: "client_credentials"  # client_credentials, client_signature, or refresh_token
     scope: ""                        # Optional: specify access scopes if needed
+
+    # WeChat Bot configuration (optional)
+    wechat_bot:
+      webhook_url: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=your_bot_key_here"
+      timeout: 10000        # Request timeout in milliseconds (optional, default: 10000)
+      retry_count: 3        # Number of retry attempts (optional, default: 3)
+      retry_delay: 1000     # Delay between retries in milliseconds (optional, default: 1000)
+      enabled: true         # Whether to enable WeChat Bot for this account (optional, default: true)
     
   # Secondary trading account (disabled by default)
   - name: account_2
@@ -22,6 +30,11 @@ accounts:
     enabled: false
     grantType: "client_credentials"
     scope: ""
+
+    # WeChat Bot configuration (optional)
+    wechat_bot:
+      webhook_url: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=your_second_bot_key_here"
+      enabled: false        # Disabled for this account
     
   # Production account example (commented out for safety)
   # - name: production_account

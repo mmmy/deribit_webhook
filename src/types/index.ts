@@ -6,6 +6,13 @@ export interface ApiKeyConfig {
   enabled: boolean;
   grantType: 'client_credentials' | 'client_signature' | 'refresh_token';
   scope?: string;
+  wechat_bot?: {
+    webhook_url: string;
+    timeout?: number;
+    retry_count?: number;
+    retry_delay?: number;
+    enabled?: boolean;
+  };
 }
 
 export interface GlobalSettings {

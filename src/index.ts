@@ -66,7 +66,7 @@ app.get('/delta', (req, res) => {
 // API routes
 app.get('/api/status', (req, res) => {
   const accounts = configLoader.getEnabledAccounts();
-  res.json({ 
+  res.json({
     service: 'Deribit Options Trading Microservice',
     version: '1.0.0',
     environment: process.env.NODE_ENV || 'development',
@@ -81,7 +81,7 @@ app.get('/api/auth/test', async (req, res) => {
   try {
     const accountName = req.query.account as string || 'account_1';
     const account = configLoader.getAccountByName(accountName);
-    
+
     if (!account) {
       return res.status(404).json({
         success: false,
@@ -103,7 +103,7 @@ app.get('/api/auth/test', async (req, res) => {
     } else {
       // Use real client
       const success = await deribitAuth.testConnection(accountName);
-      
+
       if (success) {
         const tokenInfo = deribitAuth.getTokenInfo(accountName);
         res.json({
@@ -208,7 +208,7 @@ app.get('/api/account/:accountName/:currency', async (req, res) => {
   try {
     const { accountName, currency } = req.params;
     const currencyUpper = currency.toUpperCase();
-    
+
     // 验证账户
     const account = configLoader.getAccountByName(accountName);
     if (!account) {
@@ -247,7 +247,7 @@ app.get('/api/account/:accountName/:currency', async (req, res) => {
         // 获取认证token
         await deribitAuth.authenticate(accountName);
         const tokenInfo = deribitAuth.getTokenInfo(accountName);
-        
+
         if (!tokenInfo) {
           throw new Error('Authentication failed');
         }
@@ -262,12 +262,12 @@ app.get('/api/account/:accountName/:currency', async (req, res) => {
 
         // 并行请求账户摘要和持仓信息
         const [accountSummary, positions] = await Promise.all([
-          privateAPI.getAccountSummary({ 
+          privateAPI.getAccountSummary({
             currency: currencyUpper,
-            extended: true 
+            extended: true
           }),
-          privateAPI.getPositions({ 
-            currency: currencyUpper 
+          privateAPI.getPositions({
+            currency: currencyUpper
           })
         ]);
 
@@ -308,10 +308,10 @@ app.get('/api/account/:accountName/:currency', async (req, res) => {
 // TradingView Webhook Signal
 app.post('/webhook/signal', async (req, res) => {
   const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  
+
   try {
     console.log(`📡 [${requestId}] Received webhook signal:`, req.body);
-    
+
     // 1. 验证请求体
     if (!req.body || typeof req.body !== 'object') {
       return res.status(400).json({
@@ -327,7 +327,7 @@ app.post('/webhook/signal', async (req, res) => {
     // 2. 验证必需字段
     const requiredFields = ['accountName', 'side', 'symbol', 'size'];
     const missingFields = requiredFields.filter(field => !payload[field as keyof WebhookSignalPayload]);
-    
+
     if (missingFields.length > 0) {
       return res.status(400).json({
         success: false,
@@ -377,7 +377,7 @@ app.post('/webhook/signal', async (req, res) => {
 
   } catch (error) {
     console.error(`💥 [${requestId}] Webhook processing error:`, error);
-    
+
     const errorResponse: WebhookResponse = {
       success: false,
       message: 'Internal server error processing webhook',
@@ -1285,6 +1285,33 @@ async function pollAllAccountsPositions() {
                     console.log(`   📅 Record Created: ${latestRecord.created_at ? new Date(latestRecord.created_at).toLocaleString() : 'Unknown'}`);
                     console.log(`   🆔 Record ID: ${latestRecord.id}`);
 
+                    // 发送开始调整的通知到企业微信
+                    try {
+                      const bot = configLoader.getAccountWeChatBot(account.name);
+                      if (bot) {
+                        const notificationContent = `🔄 **Delta 仓位调整开始**
+                          👤 **账户**: ${account.name}
+                          🎯 **合约**: ${pos.instrument_name}
+                          📈 **仓位大小**: ${pos.size}
+                          🔢 **仓位Delta**: ${pos.delta?.toFixed(4) || 'N/A'}
+                          📐 **单位Delta**: ${positionDelta.toFixed(4)}
+                          🎯 **目标Delta**: ${latestRecord.target_delta}
+                          📊 **移动仓位Delta**: ${latestRecord.move_position_delta || 0}
+                          ⚖️ **触发条件**: |${latestRecord.move_position_delta || 0}| < |${positionDelta.toFixed(4)}| = ${targetDeltaAbs < positionDeltaAbs ? 'TRUE' : 'FALSE'}
+                          📅 **记录创建时间**: ${latestRecord.created_at ? new Date(latestRecord.created_at).toLocaleString('zh-CN') : '未知'}
+                          🆔 **记录ID**: ${latestRecord.id}
+                          🔄 **请求ID**: ${requestId}
+                          ⏰ **开始时间**: ${new Date().toLocaleString('zh-CN')}`;
+
+                        await bot.sendMarkdown(notificationContent);
+                        console.log(`📱 [${requestId}] WeChat notification sent for account: ${account.name}`);
+                      } else {
+                        console.log(`⚠️ [${requestId}] WeChat Bot not configured for account: ${account.name}`);
+                      }
+                    } catch (error) {
+                      console.error(`❌ [${requestId}] Failed to send WeChat notification for account ${account.name}:`, error);
+                    }
+
                     // 触发仓位调整
                     const adjustmentResult = await executePositionAdjustment({
                       requestId,
@@ -1295,11 +1322,61 @@ async function pollAllAccountsPositions() {
                     });
 
                     if (adjustmentResult.success) {
+                      // 发送成功通知到企业微信
+                      try {
+                        const successBot = configLoader.getAccountWeChatBot(account.name);
+                        if (successBot) {
+                          const successContent = `✅ **Delta 仓位调整成功**
+
+👤 **账户**: ${account.name}
+📊 **调整详情**: ${adjustmentResult.oldInstrument} → ${adjustmentResult.newInstrument}
+📈 **仓位变化**: ${adjustmentResult.adjustmentSummary?.oldSize} → ${adjustmentResult.adjustmentSummary?.newDirection} ${adjustmentResult.adjustmentSummary?.newQuantity}
+🎯 **目标Delta**: ${adjustmentResult.adjustmentSummary?.targetDelta}
+🔄 **请求ID**: ${requestId}
+⏰ **完成时间**: ${new Date().toLocaleString('zh-CN')}
+
+🎉 **调整已成功完成！**`;
+
+                          await successBot.sendMarkdown(successContent);
+                          console.log(`📱 [${requestId}] Success notification sent for account: ${account.name}`);
+                        }
+                      } catch (error) {
+                        console.error(`❌ [${requestId}] Failed to send success notification for account ${account.name}:`, error);
+                      }
+
                       console.log(`🎉 [${requestId}] Position adjustment completed successfully:`);
                       console.log(`   📊 ${adjustmentResult.oldInstrument} → ${adjustmentResult.newInstrument}`);
                       console.log(`   📈 Size: ${adjustmentResult.adjustmentSummary?.oldSize} → ${adjustmentResult.adjustmentSummary?.newDirection} ${adjustmentResult.adjustmentSummary?.newQuantity}`);
                       console.log(`   🎯 Target Delta: ${adjustmentResult.adjustmentSummary?.targetDelta}`);
                     } else {
+                      // 发送错误通知到企业微信
+                      try {
+                        const errorBot = configLoader.getAccountWeChatBot(account.name);
+                        if (errorBot) {
+                          const errorContent = `❌ **Delta 仓位调整失败**
+
+👤 **账户**: ${account.name}
+🎯 **工具**: ${pos.instrument_name}
+📈 **仓位大小**: ${pos.size}
+🔢 **仓位Delta**: ${pos.delta?.toFixed(4) || 'N/A'}
+🎯 **目标Delta**: ${latestRecord.target_delta}
+🆔 **记录ID**: ${latestRecord.id}
+🔄 **请求ID**: ${requestId}
+
+💬 **失败原因**: ${adjustmentResult.reason}
+${adjustmentResult.error ? `📋 **错误详情**: \`\`\`\n${adjustmentResult.error}\n\`\`\`` : ''}
+
+⏰ **失败时间**: ${new Date().toLocaleString('zh-CN')}
+
+⚠️ **请检查系统状态并手动处理**`;
+
+                          await errorBot.sendMarkdown(errorContent);
+                          console.log(`📱 [${requestId}] Error notification sent for account: ${account.name}`);
+                        }
+                      } catch (notificationError) {
+                        console.error(`❌ [${requestId}] Failed to send error notification for account ${account.name}:`, notificationError);
+                      }
+
                       console.log(`❌ [${requestId}] Position adjustment failed: ${adjustmentResult.reason}`);
                       if (adjustmentResult.error) {
                         console.log(`   💥 Error: ${adjustmentResult.error}`);

@@ -72,6 +72,7 @@ app.get('/api/status', (req, res) => {
     environment: process.env.NODE_ENV || 'development',
     mockMode: useMockMode,
     enabledAccounts: accounts.length,
+    accounts: accounts.map(acc => ({ name: acc.name, enabled: true })),
     testEnvironment: process.env.USE_TEST_ENVIRONMENT || 'true'
   });
 });

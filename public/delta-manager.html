@@ -790,8 +790,8 @@
         let editingRecordId = null;
         let validatedRecords = []; // 存储验证后的记录
 
-        // 可用账户列表 - 从配置中获取
-        const availableAccounts = ['yqtest', 'main'];
+        // 可用账户列表 - 从API动态获取
+        let availableAccounts = [];
 
         // 页面加载时初始化
         document.addEventListener('DOMContentLoaded', function() {
@@ -918,17 +918,35 @@
             try {
                 const response = await httpClient.get('/api/status');
                 const data = response.data;
-                
-                // 使用全局定义的账户列表
+
+                // 从API响应中提取账户列表
+                if (data.accounts && Array.isArray(data.accounts)) {
+                    availableAccounts = data.accounts.map(acc => acc.name || acc);
+                    console.log(`📋 从API获取到 ${availableAccounts.length} 个账户:`, availableAccounts);
+                } else {
+                    // 如果API没有返回账户列表，尝试从其他字段获取
+                    console.warn('API未返回accounts字段，使用备用方案');
+                    availableAccounts = []; // 空数组，避免硬编码
+                }
+
                 const select = document.getElementById('accountSelect');
                 select.innerHTML = '<option value="">请选择账户...</option>';
 
-                availableAccounts.forEach(account => {
+                if (availableAccounts.length === 0) {
                     const option = document.createElement('option');
-                    option.value = account;
-                    option.textContent = account;
+                    option.value = '';
+                    option.textContent = '⚠️ 未找到可用账户';
+                    option.disabled = true;
                     select.appendChild(option);
-                });
+                    showError('未找到可用账户，请检查服务器配置');
+                } else {
+                    availableAccounts.forEach(account => {
+                        const option = document.createElement('option');
+                        option.value = account;
+                        option.textContent = account;
+                        select.appendChild(option);
+                    });
+                }
                 
                 select.addEventListener('change', function() {
                     if (this.value) {

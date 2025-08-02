@@ -349,7 +349,83 @@
         </div>
     </div>
 
+    <!-- 引入 axios 库 - 多个备用 CDN -->
     <script>
+        // 尝试多个 CDN 源
+        const cdnUrls = [
+            'https://unpkg.com/axios@1.6.0/dist/axios.min.js',
+            'https://cdn.bootcdn.net/ajax/libs/axios/1.6.0/axios.min.js',
+            'https://cdnjs.cloudflare.com/ajax/libs/axios/1.6.0/axios.min.js'
+        ];
+
+        let currentCdnIndex = 0;
+
+        function loadAxios() {
+            if (currentCdnIndex >= cdnUrls.length) {
+                console.error('所有 axios CDN 都加载失败，将使用 fetch 作为备用方案');
+                return;
+            }
+
+            const script = document.createElement('script');
+            script.src = cdnUrls[currentCdnIndex];
+            script.onload = function() {
+                console.log(`axios 加载成功，使用 CDN: ${cdnUrls[currentCdnIndex]}`);
+            };
+            script.onerror = function() {
+                console.warn(`CDN 加载失败: ${cdnUrls[currentCdnIndex]}`);
+                currentCdnIndex++;
+                loadAxios();
+            };
+            document.head.appendChild(script);
+        }
+
+        loadAxios();
+    </script>
+
+    <script>
+        // 创建统一的 HTTP 客户端（支持 axios 和 fetch 备用方案）
+        const httpClient = {
+            async get(url) {
+                if (typeof axios !== 'undefined') {
+                    return await axios.get(url);
+                } else {
+                    console.warn('axios 未加载，使用 fetch 备用方案');
+                    const response = await fetch(url);
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    return { data: await response.json() };
+                }
+            }
+        };
+
+        // 如果 axios 加载成功，配置默认设置
+        setTimeout(() => {
+            if (typeof axios !== 'undefined') {
+                axios.defaults.timeout = 30000; // 30秒超时
+                axios.defaults.headers.common['Content-Type'] = 'application/json';
+
+                // axios 响应拦截器，统一处理错误
+                axios.interceptors.response.use(
+                    response => response,
+                    error => {
+                        if (error.response) {
+                            // 服务器返回错误状态码
+                            const message = error.response.data?.message || `HTTP ${error.response.status}: ${error.response.statusText}`;
+                            throw new Error(message);
+                        } else if (error.request) {
+                            // 请求发出但没有收到响应
+                            throw new Error('网络连接失败，请检查网络或服务器状态');
+                        } else {
+                            // 其他错误
+                            throw new Error(error.message);
+                        }
+                    }
+                );
+                console.log('axios 配置完成');
+            }
+        }, 1000); // 等待1秒确保 axios 加载完成
+
         // 页面加载时获取账户信息
         document.addEventListener('DOMContentLoaded', function() {
             loadAccounts();
@@ -358,8 +434,8 @@
         // 加载账户列表
         async function loadAccounts() {
             try {
-                const response = await fetch('/api/status');
-                const data = await response.json();
+                const response = await httpClient.get('/api/status');
+                const data = response.data;
                 
                 // 这里需要从实际的API获取账户列表
                 // 暂时使用硬编码的账户

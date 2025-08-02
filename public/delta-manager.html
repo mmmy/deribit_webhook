@@ -760,7 +760,14 @@
                     error => {
                         if (error.response) {
                             // 服务器返回错误状态码
-                            const message = error.response.data?.message || `HTTP ${error.response.status}: ${error.response.statusText}`;
+                            let message = error.response.data?.message || `HTTP ${error.response.status}: ${error.response.statusText}`;
+
+                            // 特殊处理账户不存在的错误
+                            if (error.response.status === 404 && message.includes('Account not found')) {
+                                const accountName = message.split(': ')[1];
+                                message = `账户 "${accountName}" 不存在。可用账户: ${availableAccounts.join(', ')}`;
+                            }
+
                             throw new Error(message);
                         } else if (error.request) {
                             // 请求发出但没有收到响应
@@ -783,6 +790,9 @@
         let editingRecordId = null;
         let validatedRecords = []; // 存储验证后的记录
 
+        // 可用账户列表 - 从配置中获取
+        const availableAccounts = ['yqtest', 'main'];
+
         // 页面加载时初始化
         document.addEventListener('DOMContentLoaded', function() {
             loadAccounts();
@@ -791,8 +801,17 @@
             const urlParams = new URLSearchParams(window.location.search);
             const accountId = urlParams.get('account');
             if (accountId) {
-                document.getElementById('accountSelect').value = accountId;
-                selectAccount(accountId);
+                // 先检查账户是否存在，再设置选择框
+                if (availableAccounts.includes(accountId)) {
+                    document.getElementById('accountSelect').value = accountId;
+                    selectAccount(accountId);
+                } else {
+                    // 账户不存在，显示错误并清理URL
+                    showError(`URL中指定的账户 "${accountId}" 不存在。可用账户: ${availableAccounts.join(', ')}`);
+                    const url = new URL(window.location);
+                    url.searchParams.delete('account');
+                    window.history.replaceState({}, '', url);
+                }
             }
 
             // 添加键盘快捷键
@@ -900,13 +919,11 @@
                 const response = await httpClient.get('/api/status');
                 const data = response.data;
                 
-                // 这里需要获取实际的账户列表，暂时使用硬编码
-                const accounts = ['yqtest', 'main']; // 从配置中获取
-                
+                // 使用全局定义的账户列表
                 const select = document.getElementById('accountSelect');
                 select.innerHTML = '<option value="">请选择账户...</option>';
-                
-                accounts.forEach(account => {
+
+                availableAccounts.forEach(account => {
                     const option = document.createElement('option');
                     option.value = account;
                     option.textContent = account;
@@ -930,6 +947,18 @@
 
         // 选择账户
         function selectAccount(accountId) {
+            // 检查账户是否存在
+            if (!availableAccounts.includes(accountId)) {
+                showError(`账户 "${accountId}" 不存在。可用账户: ${availableAccounts.join(', ')}`);
+                // 清空URL参数
+                const url = new URL(window.location);
+                url.searchParams.delete('account');
+                window.history.replaceState({}, '', url);
+                // 重置选择框
+                document.getElementById('accountSelect').value = '';
+                return;
+            }
+
             currentAccount = accountId;
             loadData();
         }

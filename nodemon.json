@@ -4,8 +4,6 @@
   ],
   "ext": "ts,js,json",
   "ignore": [
-    "src/**/*.test.ts",
-    "src/**/*.spec.ts",
     "node_modules/**/*",
     "dist/**/*",
     "*.log"

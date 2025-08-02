@@ -89,6 +89,15 @@
             box-shadow: 0 15px 40px rgba(231, 76, 60, 0.4);
         }
 
+        .feature-card.logs {
+            background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%);
+            box-shadow: 0 10px 30px rgba(155, 89, 182, 0.3);
+        }
+
+        .feature-card.logs:hover {
+            box-shadow: 0 15px 40px rgba(155, 89, 182, 0.4);
+        }
+
         .feature-card .icon {
             font-size: 3em;
             margin-bottom: 20px;
@@ -260,22 +269,28 @@
         <div class="main-content">
             <!-- 主要功能 -->
             <div class="features-grid">
-                <div class="feature-card delta" onclick="window.location.href='/delta'">
+                <div class="feature-card delta" data-href="/delta">
                     <div class="icon">📊</div>
                     <h3>Delta管理器</h3>
                     <p>管理期权仓位和未成交订单的Delta值，支持实时数据同步和手动录入</p>
                 </div>
 
-                <div class="feature-card webhook" onclick="window.location.href='/webhook/signal'">
+                <div class="feature-card webhook" data-href="/webhook/signal">
                     <div class="icon">🔗</div>
                     <h3>Webhook接口</h3>
                     <p>接收TradingView信号，自动执行期权交易策略，支持多账户管理</p>
                 </div>
 
-                <div class="feature-card" onclick="window.location.href='/api/status'">
+                <div class="feature-card" data-href="/api/status">
                     <div class="icon">⚙️</div>
                     <h3>系统状态</h3>
                     <p>查看系统运行状态、账户配置和交易服务状态</p>
+                </div>
+
+                <div class="feature-card logs" data-href="/logs">
+                    <div class="icon">📋</div>
+                    <h3>日志查询</h3>
+                    <p>查询和分析系统运行日志，支持时间区间和关键词搜索</p>
                 </div>
             </div>
 
@@ -429,6 +444,16 @@
         // 页面加载时获取账户信息
         document.addEventListener('DOMContentLoaded', function() {
             loadAccounts();
+
+            // 添加功能卡片点击事件监听器
+            document.querySelectorAll('.feature-card').forEach(card => {
+                card.addEventListener('click', function() {
+                    const href = this.getAttribute('data-href');
+                    if (href) {
+                        window.location.href = href;
+                    }
+                });
+            });
         });
 
         // 加载账户列表

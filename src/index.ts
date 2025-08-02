@@ -6,7 +6,7 @@ import morgan from 'morgan';
 import path from 'path';
 import { DeribitPrivateAPI, createAuthInfo, getConfigByEnvironment } from './api';
 import { CreateDeltaRecordInput, DeltaManager, DeltaRecord, DeltaRecordType } from './database';
-import { ConfigLoader, DeribitAuth, DeribitClient, MockDeribitClient, OptionTradingService, WebhookResponse, WebhookSignalPayload } from './services';
+import { ConfigLoader, DeribitAuth, DeribitClient, LogManager, MockDeribitClient, OptionTradingService, WebhookResponse, WebhookSignalPayload } from './services';
 import { DeribitPosition, OptionTradingParams } from './types';
 
 // Load environment variables
@@ -47,6 +47,7 @@ const mockClient = new MockDeribitClient();
 const configLoader = ConfigLoader.getInstance();
 const optionTradingService = new OptionTradingService();
 const deltaManager = DeltaManager.getInstance();
+const logManager = LogManager.getInstance();
 
 // Determine if we should use mock mode (when network is unavailable)
 const useMockMode = process.env.USE_MOCK_MODE === 'true';
@@ -63,6 +64,11 @@ app.get('/delta', (req, res) => {
   res.sendFile(path.join(__dirname, '../public/delta-manager.html'));
 });
 
+// 日志查询页面路由
+app.get('/logs', (req, res) => {
+  res.sendFile(path.join(__dirname, '../public/logs.html'));
+});
+
 // API routes
 app.get('/api/status', (req, res) => {
   const accounts = configLoader.getEnabledAccounts();
@@ -75,6 +81,79 @@ app.get('/api/status', (req, res) => {
     accounts: accounts.map(acc => ({ name: acc.name, enabled: true })),
     testEnvironment: process.env.USE_TEST_ENVIRONMENT || 'true'
   });
+});
+
+// 日志查询接口
+app.get('/api/logs', async (req, res) => {
+  try {
+    const {
+      startTime,
+      endTime,
+      maxRecords = '200',
+      level,
+      keyword
+    } = req.query;
+
+    // 参数验证
+    const maxRecordsNum = parseInt(maxRecords as string);
+    if (isNaN(maxRecordsNum) || maxRecordsNum < 1 || maxRecordsNum > 1000) {
+      return res.status(400).json({
+        success: false,
+        message: '最大条数必须是1-1000之间的数字'
+      });
+    }
+
+    // 时间验证
+    if (startTime && isNaN(Date.parse(startTime as string))) {
+      return res.status(400).json({
+        success: false,
+        message: '开始时间格式无效'
+      });
+    }
+
+    if (endTime && isNaN(Date.parse(endTime as string))) {
+      return res.status(400).json({
+        success: false,
+        message: '结束时间格式无效'
+      });
+    }
+
+    // 查询日志
+    const logs = await logManager.queryLogs({
+      startTime: startTime as string,
+      endTime: endTime as string,
+      maxRecords: maxRecordsNum,
+      level: level as string,
+      keyword: keyword as string
+    });
+
+    // 获取统计信息
+    const stats = await logManager.getLogStats();
+
+    res.json({
+      success: true,
+      data: {
+        logs,
+        stats,
+        query: {
+          startTime,
+          endTime,
+          maxRecords: maxRecordsNum,
+          level,
+          keyword,
+          resultCount: logs.length
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ 查询日志失败:', error);
+    res.status(500).json({
+      success: false,
+      message: '查询日志失败',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
 });
 
 // Authentication test endpoint
@@ -1291,18 +1370,18 @@ async function pollAllAccountsPositions() {
                       const bot = configLoader.getAccountWeChatBot(account.name);
                       if (bot) {
                         const notificationContent = `🔄 **Delta 仓位调整开始**
-                          👤 **账户**: ${account.name}
-                          🎯 **合约**: ${pos.instrument_name}
-                          📈 **仓位大小**: ${pos.size}
-                          🔢 **仓位Delta**: ${pos.delta?.toFixed(4) || 'N/A'}
-                          📐 **单位Delta**: ${positionDelta.toFixed(4)}
-                          🎯 **目标Delta**: ${latestRecord.target_delta}
-                          📊 **移动仓位Delta**: ${latestRecord.move_position_delta || 0}
-                          ⚖️ **触发条件**: |${latestRecord.move_position_delta || 0}| < |${positionDelta.toFixed(4)}| = ${targetDeltaAbs < positionDeltaAbs ? 'TRUE' : 'FALSE'}
-                          📅 **记录创建时间**: ${latestRecord.created_at ? new Date(latestRecord.created_at).toLocaleString('zh-CN') : '未知'}
-                          🆔 **记录ID**: ${latestRecord.id}
-                          🔄 **请求ID**: ${requestId}
-                          ⏰ **开始时间**: ${new Date().toLocaleString('zh-CN')}`;
+👤 **账户**: ${account.name}
+🎯 **合约**: ${pos.instrument_name}
+📈 **仓位大小**: ${pos.size}
+🔢 **仓位Delta**: ${pos.delta?.toFixed(4) || 'N/A'}
+📐 **单位Delta**: ${positionDelta.toFixed(4)}
+🎯 **目标Delta**: ${latestRecord.target_delta}
+📊 **移动仓位Delta**: ${latestRecord.move_position_delta || 0}
+⚖️ **触发条件**: |${latestRecord.move_position_delta || 0}| < |${positionDelta.toFixed(4)}| = ${targetDeltaAbs < positionDeltaAbs ? 'TRUE' : 'FALSE'}
+📅 **记录创建时间**: ${latestRecord.created_at ? new Date(latestRecord.created_at).toLocaleString('zh-CN') : '未知'}
+🆔 **记录ID**: ${latestRecord.id}
+🔄 **请求ID**: ${requestId}
+⏰ **开始时间**: ${new Date().toLocaleString('zh-CN')}`;
 
                         await bot.sendMarkdown(notificationContent);
                         console.log(`📱 [${requestId}] WeChat notification sent for account: ${account.name}`);

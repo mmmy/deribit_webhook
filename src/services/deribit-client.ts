@@ -177,38 +177,50 @@ export class DeribitClient {
       );
 
       // 3. 重构筛选逻辑:
-      // 3.1 从所有期权中找到最近的两个到期日
+      // 3.1 选择距离最小到期日最近的两个到期日(绝对值最小)
       const now = new Date();
       const minExpiryTime = new Date(
         now.getTime() + (minExpiredDays - 1) * 24 * 60 * 60 * 1000
       );
 
-      // 过滤出符合最小到期天数要求的期权
-      const validInstruments = filteredInstruments.filter((instrument) => {
-        const expiryDate = new Date(instrument.expiration_timestamp);
-        return expiryDate >= minExpiryTime;
+      // 按到期时间分组所有期权（不过滤最小到期时间）
+      const allExpiryGroups = new Map<number, typeof filteredInstruments>();
+      filteredInstruments.forEach((instrument) => {
+        const expiryTimestamp = instrument.expiration_timestamp;
+        if (!allExpiryGroups.has(expiryTimestamp)) {
+          allExpiryGroups.set(expiryTimestamp, []);
+        }
+        allExpiryGroups.get(expiryTimestamp)!.push(instrument);
       });
 
-      if (validInstruments.length === 0) {
-        console.log("❌ No instruments found after minimum expiry filtering");
+      if (allExpiryGroups.size === 0) {
+        console.log("❌ No instruments found for expiry grouping");
         return null;
       }
 
-      // 按到期时间分组
-      const expiryGroups = new Map<number, typeof validInstruments>();
-      validInstruments.forEach((instrument) => {
-        const expiryTimestamp = instrument.expiration_timestamp;
-        if (!expiryGroups.has(expiryTimestamp)) {
-          expiryGroups.set(expiryTimestamp, []);
-        }
-        expiryGroups.get(expiryTimestamp)!.push(instrument);
+      // 计算每个到期日与最小到期日的距离，并按距离排序
+      const expiryDistances = Array.from(allExpiryGroups.keys()).map(expiryTimestamp => ({
+        expiryTimestamp,
+        distance: Math.abs(expiryTimestamp - minExpiryTime.getTime())
+      })).sort((a, b) => a.distance - b.distance);
+
+      // 选择距离最小的两个到期日
+      const nearestTwoExpiries = expiryDistances.slice(0, 2).map(item => item.expiryTimestamp);
+
+      console.log(`📅 Found ${nearestTwoExpiries.length} nearest expiry dates to minimum expiry time`);
+      console.log(`📅 Minimum expiry time: ${minExpiryTime.toLocaleDateString()}`);
+      nearestTwoExpiries.forEach((expiry, index) => {
+        const expiryDate = new Date(expiry);
+        const distance = Math.abs(expiry - minExpiryTime.getTime());
+        const daysDifference = Math.round(distance / (24 * 60 * 60 * 1000));
+        console.log(`📅 Expiry ${index + 1}: ${expiryDate.toLocaleDateString()} (${daysDifference} days from min expiry)`);
       });
 
-      // 获取最近的两个到期日
-      const sortedExpiryDates = Array.from(expiryGroups.keys()).sort(
-        (a, b) => a - b
-      );
-      const nearestTwoExpiries = sortedExpiryDates.slice(0, 2);
+      // 创建最终的到期日分组（只包含选中的两个到期日）
+      const expiryGroups = new Map<number, typeof filteredInstruments>();
+      nearestTwoExpiries.forEach(expiryTimestamp => {
+        expiryGroups.set(expiryTimestamp, allExpiryGroups.get(expiryTimestamp)!);
+      });
       console.log(`📅 Found ${nearestTwoExpiries.length} nearest expiry dates`);
 
       if (nearestTwoExpiries.length === 0) {

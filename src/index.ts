@@ -1375,9 +1375,9 @@ async function pollAllAccountsPositions() {
 📈 **仓位大小**: ${pos.size}
 🔢 **仓位Delta**: ${pos.delta?.toFixed(4) || 'N/A'}
 📐 **单位Delta**: ${positionDelta.toFixed(4)}
-🎯 **目标Delta**: ${latestRecord.target_delta}
+🎯 **目标Delta**: ${targetDeltaAbs}
 📊 **移动仓位Delta**: ${latestRecord.move_position_delta || 0}
-⚖️ **触发条件**: |${latestRecord.move_position_delta || 0}| < |${positionDelta.toFixed(4)}| = ${targetDeltaAbs < positionDeltaAbs ? 'TRUE' : 'FALSE'}
+⚖️ **触发条件**: |${targetDeltaAbs || 0}| < |${positionDelta.toFixed(4)}| = ${targetDeltaAbs < positionDeltaAbs ? 'TRUE' : 'FALSE'}
 📅 **记录创建时间**: ${latestRecord.created_at ? new Date(latestRecord.created_at).toLocaleString('zh-CN') : '未知'}
 🆔 **记录ID**: ${latestRecord.id}
 🔄 **请求ID**: ${requestId}

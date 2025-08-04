@@ -486,6 +486,13 @@ export class OptionTradingService {
             orderQuantity = params.quantity / (entryPrice * optionDetails.index_price);
             console.log(`💰 Cash mode: converting $${params.quantity} to ${orderQuantity} contracts at price ${entryPrice}`);
           }
+        } else if (params.qtyType === 'fixed') { // fixed表示是合约数量
+          console.log(`💰 Fixed mode: using ${params.quantity} contracts directly`);
+          if (instrumentInfo.settlement_currency === 'USDC') {
+            orderQuantity = params.quantity * (params.price || optionDetails.index_price);
+          } else {
+            orderQuantity = params.quantity / entryPrice;
+          }
         }
 
         if (orderQuantity <= 0) {

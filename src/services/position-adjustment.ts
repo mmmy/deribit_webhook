@@ -1,0 +1,544 @@
+/**
+ * 仓位调整服务 - 函数式编程
+ * 独立的仓位调整逻辑，避免循环依赖
+ */
+
+import { ConfigLoader } from '../config';
+import { DeltaManager } from '../database/delta-manager';
+import { DeltaRecord, DeltaRecordType } from '../database/types';
+import { DeribitPosition } from '../types';
+import { correctOrderAmount, correctSmartPrice } from '../utils/price-correction';
+import { DeribitAuth } from './auth';
+import { DeribitClient } from './deribit-client';
+import { executeProgressiveLimitStrategy } from './progressive-limit-strategy';
+
+
+
+/**
+ * 执行仓位调整
+ * @param params 调整参数
+ */
+export async function executePositionAdjustment(
+  params: {
+    requestId: string;
+    accountName: string;
+    currentPosition: DeribitPosition;
+    deltaRecord: DeltaRecord;
+    accessToken: string;
+  },
+  services: {
+    deribitClient: DeribitClient;
+    deltaManager: DeltaManager;
+    deribitAuth: DeribitAuth;
+  }
+) {
+  const { requestId, accountName, currentPosition, deltaRecord, accessToken } = params;
+  const { deribitClient, deltaManager, deribitAuth } = services;
+
+  try {
+    console.log(`🔄 [${requestId}] Starting position adjustment for ${currentPosition.instrument_name}`);
+
+    // 提取货币信息
+    const currency = currentPosition.instrument_name.split('-')[0]; // BTC, ETH, SOL
+
+    // 1. 根据latestRecord.move_position_delta 获取新的期权工具
+    console.log(`📊 [${requestId}] Getting instrument by delta: currency=${currency}, delta=${deltaRecord.move_position_delta}`);
+
+    // 确定方向：如果move_position_delta为正，选择看涨期权；为负，选择看跌期权
+    const longSide = deltaRecord.move_position_delta > 0;
+
+    // 获取新的期权工具
+    const deltaResult = await deribitClient.getInstrumentByDelta(
+      currency,
+      deltaRecord.min_expire_days || 7, // 最小到期天数，默认7天
+      Math.abs(deltaRecord.move_position_delta), // 目标delta值
+      longSide
+    );
+
+    if (!deltaResult || !deltaResult.instrument) {
+      throw new Error(`Failed to get instrument by delta: No suitable instrument found`);
+    }
+
+    console.log(`🎯 [${requestId}] Selected new instrument: ${deltaResult.instrument.instrument_name}`);
+
+    // 2. 平掉当前仓位
+    const closeDirection = currentPosition.size > 0 ? 'sell' : 'buy';
+    const closeQuantity = Math.abs(currentPosition.size);
+
+    console.log(`📉 [${requestId}] Closing current position: ${closeDirection} ${closeQuantity} contracts of ${currentPosition.instrument_name}`);
+
+    const closeResult = await deribitClient.placeOrder(
+      currentPosition.instrument_name,
+      closeDirection,
+      closeQuantity,
+      'market', // 使用市价单快速平仓
+      undefined,
+      accessToken
+    );
+
+    if (!closeResult) {
+      throw new Error(`Failed to close position: No response received`);
+    }
+
+    console.log(`✅ [${requestId}] Current position closed successfully: ${closeResult.order.order_id}`);
+
+    // 3. 删除数据库记录
+    const deleteSuccess = deltaManager.deleteRecord(deltaRecord.id!);
+    console.log(`🗑️ [${requestId}] Delta record deletion: ${deleteSuccess ? 'success' : 'failed'} (ID: ${deltaRecord.id})`);
+
+    // 4. 开新仓位
+    const newDirection = deltaRecord.move_position_delta > 0 ? 'buy' : 'sell';
+    const newQuantity = Math.abs(currentPosition.size);
+
+    console.log(`📈 [${requestId}] Opening new position: ${newDirection} ${newQuantity} contracts of ${deltaResult.instrument.instrument_name}`);
+
+    const newOrderResult = await deribitClient.placeOrder(
+      deltaResult.instrument.instrument_name,
+      newDirection,
+      newQuantity,
+      'limit',
+      0.05, // 使用默认限价
+      accessToken
+    );
+
+    if (!newOrderResult) {
+      console.error(`❌ [${requestId}] Failed to open new position, but old position was closed`);
+      throw new Error(`Failed to open new position: No response received`);
+    }
+
+    console.log(`✅ [${requestId}] New position opened successfully: ${newOrderResult.order.order_id}`);
+
+    // 返回成功结果
+    return {
+      success: true,
+      closeResult: closeResult,
+      newOrderResult: newOrderResult,
+      deltaRecordDeleted: deleteSuccess,
+      oldInstrument: currentPosition.instrument_name,
+      newInstrument: deltaResult.instrument.instrument_name,
+      adjustmentSummary: {
+        oldSize: currentPosition.size,
+        oldDelta: currentPosition.delta,
+        newDirection: newDirection,
+        newQuantity: newQuantity,
+        targetDelta: deltaRecord.move_position_delta
+      }
+    };
+
+  } catch (error) {
+    console.error(`💥 [${requestId}] Position adjustment failed:`, error);
+    return {
+      success: false,
+      reason: 'Exception during adjustment',
+      error: error instanceof Error ? error.message : 'Unknown error',
+      deltaRecord: deltaRecord
+    };
+  }
+}
+
+/**
+ * 基于tv_id执行仓位平仓
+ * @param accountName 账户名
+ * @param tvId TV信号ID
+ * @param closeRatio 平仓比例 (0-1, 1表示全平)
+ * @param services 服务依赖
+ */
+export async function executePositionCloseByTvId(
+  accountName: string,
+  tvId: number,
+  closeRatio: number,
+  isMarketOrder: boolean, 
+  services: {
+    configLoader: ConfigLoader;
+    deltaManager: DeltaManager;
+    deribitAuth: DeribitAuth;
+    deribitClient: DeribitClient;
+  }
+) {
+  const { configLoader, deltaManager, deribitAuth, deribitClient } = services;
+
+  try {
+    console.log(`🔍 Executing position close for account: ${accountName}, tv_id: ${tvId}, ratio: ${closeRatio}`);
+
+    // 验证平仓比例
+    if (closeRatio <= 0 || closeRatio > 1) {
+      return {
+        success: false,
+        message: `Invalid close ratio: ${closeRatio}. Must be between 0 and 1`
+      };
+    }
+
+    // 1. 查询tv_id对应的Delta数据库记录
+    const deltaRecords = deltaManager.getRecords({
+      account_id: accountName,
+      tv_id: tvId,
+      record_type: DeltaRecordType.POSITION
+    });
+
+    if (deltaRecords.length === 0) {
+      console.log(`⚠️ No delta records found for tv_id: ${tvId}`);
+      return {
+        success: false,
+        message: `No delta records found for tv_id: ${tvId}`
+      };
+    }
+
+    console.log(`📊 Found ${deltaRecords.length} delta record(s) for tv_id: ${tvId}`);
+
+    // 2. 获取账户配置
+    const account = configLoader.getAccountByName(accountName);
+    if (!account) {
+      return {
+        success: false,
+        message: `Account not found: ${accountName}`
+      };
+    }
+
+    // 3. 获取访问令牌
+    let tokenInfo = deribitAuth.getTokenInfo(accountName);
+    if (!tokenInfo) {
+      await deribitAuth.authenticate(accountName);
+      tokenInfo = deribitAuth.getTokenInfo(accountName);
+      if (!tokenInfo) {
+        return {
+          success: false,
+          message: `Failed to get access token for account: ${accountName}`
+        };
+      }
+    }
+
+    const accessToken = tokenInfo.accessToken;
+
+    // 4. 获取当前仓位信息 - 获取所有期权仓位
+    const positions = await deribitClient.getPositions(accessToken, {
+      kind: 'option'
+    });
+
+    // 5. 对每个Delta记录执行平仓操作
+    const closeResults = [];
+    for (const deltaRecord of deltaRecords) {
+      const currentPosition = positions.find(pos =>
+        pos.instrument_name === deltaRecord.instrument_name && pos.size !== 0
+      );
+
+      if (currentPosition) {
+        console.log(`🔄 Executing close for instrument: ${deltaRecord.instrument_name}`);
+
+        const closeResult = await executePositionClose(
+          {
+            requestId: `tv_close_${tvId}_${Date.now()}`,
+            accountName,
+            currentPosition,
+            deltaRecord,
+            accessToken,
+            closeRatio,
+            isMarketOrder
+          },
+          {
+            deribitClient,
+            deltaManager,
+            deribitAuth
+          }
+        );
+
+        closeResults.push(closeResult);
+      } else {
+        console.log(`⚠️ No active position found for instrument: ${deltaRecord.instrument_name}`);
+        closeResults.push({
+          success: false,
+          message: `No active position found for instrument: ${deltaRecord.instrument_name}`
+        });
+      }
+    }
+
+    // 6. 汇总结果
+    const successCount = closeResults.filter(r => r.success).length;
+    const totalCount = closeResults.length;
+
+    return {
+      success: successCount > 0,
+      message: `Position close completed: ${successCount}/${totalCount} successful`,
+      orderId: `tv_close_${tvId}`,
+      executedQuantity: successCount,
+      closeRatio: closeRatio
+    };
+
+  } catch (error) {
+    console.error(`❌ Position close failed for tv_id ${tvId}:`, error);
+    return {
+      success: false,
+      message: `Position close failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+    };
+  }
+}
+
+/**
+ * 执行单个仓位的平仓操作
+ * @param params 平仓参数
+ * @param services 服务依赖
+ */
+export async function executePositionClose(
+  params: {
+    requestId: string;
+    accountName: string;
+    currentPosition: DeribitPosition;
+    deltaRecord: DeltaRecord;
+    accessToken: string;
+    closeRatio: number;
+    isMarketOrder?: boolean;
+  },
+  services: {
+    deribitClient: DeribitClient;
+    deltaManager: DeltaManager;
+    deribitAuth: DeribitAuth;
+  }
+) {
+  const { requestId, accountName, currentPosition, deltaRecord, accessToken, closeRatio } = params;
+  const { deribitClient, deltaManager, deribitAuth } = services;
+
+  try {
+    console.log(`🔄 [${requestId}] Starting position close for ${currentPosition.instrument_name} (ratio: ${closeRatio})`);
+
+    // 计算平仓数量
+    const totalSize = Math.abs(currentPosition.size);
+    const rawCloseQuantity = totalSize * closeRatio;
+
+    // 获取工具详情用于数量修正
+    const instrumentInfo = await deribitClient.getInstrument(currentPosition.instrument_name);
+    if (!instrumentInfo) {
+      throw new Error(`Failed to get instrument details for ${currentPosition.instrument_name}`);
+    }
+
+    // 使用纯函数修正平仓数量
+    const amountResult = correctOrderAmount(rawCloseQuantity, instrumentInfo);
+    const closeQuantity = amountResult.correctedAmount;
+    const closeDirection = currentPosition.direction === 'buy' ? 'sell' : 'buy';
+
+    console.log(`📉 [${requestId}] Closing position: ${closeDirection} ${closeQuantity} contracts (${(closeRatio * 100).toFixed(1)}% of ${totalSize})`);
+    let price = undefined;
+    if (!params.isMarketOrder) {
+      const optionDetails = await deribitClient.getOptionDetails(currentPosition.instrument_name);
+      if (!optionDetails) {
+        throw new Error(`Failed to get option details for ${currentPosition.instrument_name}`);
+      }
+
+      // 获取工具详情用于价格修正
+      // const instrumentInfo = await deribitClient.getInstrument(currentPosition.instrument_name);
+      // if (!instrumentInfo) {
+      //   throw new Error(`Failed to get instrument details for ${currentPosition.instrument_name}`);
+      // }
+
+      // 使用纯函数计算和修正智能价格
+      const smartPriceResult = correctSmartPrice(
+        closeDirection,
+        optionDetails.best_bid_price,
+        optionDetails.best_ask_price,
+        instrumentInfo,
+        0.2 // 20%的价差比例
+      );
+      price = smartPriceResult.correctedPrice;
+    }
+    // 执行平仓订单
+    const closeResult = await deribitClient.placeOrder(
+      currentPosition.instrument_name,
+      closeDirection,
+      closeQuantity,
+      params.isMarketOrder ? 'market' : 'limit', // 使用市价单快速平仓
+      price,
+      accessToken
+    );
+
+    if (!params.isMarketOrder) {
+      // 执行渐进式限价单策略
+      try {
+        if (closeResult?.order?.order_id) {
+          console.log(`🎯 [${requestId}] Starting progressive limit strategy for close order ${closeResult.order.order_id}`);
+
+          const strategyResult = await executeProgressiveLimitStrategy(
+            {
+              orderId: closeResult.order.order_id,
+              instrumentName: currentPosition.instrument_name,
+              direction: closeDirection,
+              quantity: closeQuantity,
+              initialPrice: price || closeResult.order.price,
+              accountName: params.accountName,
+              instrumentDetail: instrumentInfo,
+              timeout: 8000,
+              maxStep: 3
+            },
+            {
+              deribitAuth: services.deribitAuth,
+              deribitClient: services.deribitClient
+            }
+          );
+
+          console.log(`🏁 [${requestId}] Progressive strategy completed: ${strategyResult.success ? 'success' : 'failed'}`);
+          if (strategyResult.positionInfo) {
+            console.log(`📊 [${requestId}] Final execution: ${strategyResult.executedQuantity}/${closeQuantity} contracts at ${strategyResult.averagePrice}`);
+          }
+        }
+      } catch (strategyError) {
+        console.error(`❌ [${requestId}] Progressive strategy error:`, strategyError);
+        // 策略失败不影响主流程，订单已经下达
+      }
+    }
+
+    if (!closeResult) {
+      throw new Error(`Failed to close position: No response received`);
+    }
+
+    console.log(`✅ [${requestId}] Position closed successfully: ${closeResult.order.order_id}`);
+
+    // 如果是全平(closeRatio = 1)，删除Delta记录
+    let deltaRecordDeleted = false;
+    if (closeRatio === 1) {
+      deltaRecordDeleted = deltaManager.deleteRecord(deltaRecord.id!);
+      console.log(`🗑️ [${requestId}] Delta record deletion: ${deltaRecordDeleted ? 'success' : 'failed'} (ID: ${deltaRecord.id})`);
+    } else {
+      console.log(`📝 [${requestId}] Partial close (${(closeRatio * 100).toFixed(1)}%), keeping delta record`);
+    }
+
+    // 返回成功结果
+    return {
+      success: true,
+      closeResult: closeResult,
+      deltaRecordDeleted: deltaRecordDeleted,
+      instrument: currentPosition.instrument_name,
+      closeSummary: {
+        originalSize: currentPosition.size,
+        closeQuantity: closeQuantity,
+        closeRatio: closeRatio,
+        remainingSize: totalSize - closeQuantity,
+        closeDirection: closeDirection
+      }
+    };
+
+  } catch (error) {
+    console.error(`💥 [${requestId}] Position close failed:`, error);
+    return {
+      success: false,
+      reason: 'Exception during close',
+      error: error instanceof Error ? error.message : 'Unknown error',
+      deltaRecord: deltaRecord
+    };
+  }
+}
+
+/**
+ * 基于tv_id执行仓位调整
+ */
+export async function executePositionAdjustmentByTvId(
+  accountName: string,
+  tvId: number,
+  services: {
+    configLoader: ConfigLoader;
+    deltaManager: DeltaManager;
+    deribitAuth: DeribitAuth;
+    deribitClient: DeribitClient;
+  }
+) {
+  const { configLoader, deltaManager, deribitAuth, deribitClient } = services;
+
+  try {
+    console.log(`🔍 Executing position adjustment for account: ${accountName}, tv_id: ${tvId}`);
+
+    // 1. 查询tv_id对应的Delta数据库记录
+    const deltaRecords = deltaManager.getRecords({
+      account_id: accountName,
+      tv_id: tvId,
+      record_type: DeltaRecordType.POSITION
+    });
+
+    if (deltaRecords.length === 0) {
+      console.log(`⚠️ No delta records found for tv_id: ${tvId}`);
+      return {
+        success: false,
+        message: `No delta records found for tv_id: ${tvId}`
+      };
+    }
+
+    console.log(`📊 Found ${deltaRecords.length} delta record(s) for tv_id: ${tvId}`);
+
+    // 2. 获取账户配置
+    const account = configLoader.getAccountByName(accountName);
+    if (!account) {
+      return {
+        success: false,
+        message: `Account not found: ${accountName}`
+      };
+    }
+
+    // 3. 获取访问令牌
+    let tokenInfo = deribitAuth.getTokenInfo(accountName);
+    if (!tokenInfo) {
+      await deribitAuth.authenticate(accountName);
+      tokenInfo = deribitAuth.getTokenInfo(accountName);
+      if (!tokenInfo) {
+        return {
+          success: false,
+          message: `Failed to get access token for account: ${accountName}`
+        };
+      }
+    }
+
+    const accessToken = tokenInfo.accessToken;
+
+    // 4. 获取当前仓位信息 - 获取所有期权仓位
+    const positions = await deribitClient.getPositions(accessToken, {
+      kind: 'option'
+    });
+
+    // 5. 对每个Delta记录执行仓位调整
+    const adjustmentResults = [];
+    for (const deltaRecord of deltaRecords) {
+      const currentPosition = positions.find(pos =>
+        pos.instrument_name === deltaRecord.instrument_name && pos.size !== 0
+      );
+
+      if (currentPosition) {
+        console.log(`🔄 Executing adjustment for instrument: ${deltaRecord.instrument_name}`);
+
+        const adjustmentResult = await executePositionAdjustment(
+          {
+            requestId: `tv_${tvId}_${Date.now()}`,
+            accountName,
+            currentPosition,
+            deltaRecord,
+            accessToken
+          },
+          {
+            deribitClient,
+            deltaManager,
+            deribitAuth
+          }
+        );
+
+        adjustmentResults.push(adjustmentResult);
+      } else {
+        console.log(`⚠️ No active position found for instrument: ${deltaRecord.instrument_name}`);
+        adjustmentResults.push({
+          success: false,
+          message: `No active position found for instrument: ${deltaRecord.instrument_name}`
+        });
+      }
+    }
+
+    // 6. 汇总结果
+    const successCount = adjustmentResults.filter(r => r.success).length;
+    const totalCount = adjustmentResults.length;
+
+    return {
+      success: successCount > 0,
+      message: `Position adjustment completed: ${successCount}/${totalCount} successful`,
+      orderId: `tv_adjustment_${tvId}`,
+      executedQuantity: successCount
+    };
+
+  } catch (error) {
+    console.error(`❌ Position adjustment failed for tv_id ${tvId}:`, error);
+    return {
+      success: false,
+      message: `Position adjustment failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+    };
+  }
+}

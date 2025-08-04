@@ -8,6 +8,47 @@ import type {
 } from "../types";
 import type { DeribitInstrumentDetail } from "../types/deribit-instrument";
 
+// Deribit订单响应类型
+export interface DeribitOrderResponse {
+  order: {
+    order_id: string;
+    instrument_name: string;
+    amount: number;
+    direction: 'buy' | 'sell';
+    order_type: 'limit' | 'market' | 'stop_limit' | 'stop_market';
+    price: number;
+    order_state: 'open' | 'filled' | 'rejected' | 'cancelled' | 'untriggered';
+    creation_timestamp: number;
+    last_update_timestamp: number;
+    average_price: number;
+    filled_amount: number;
+    contracts: number;
+    label?: string;
+    time_in_force?: string;
+    post_only?: boolean;
+    reduce_only?: boolean;
+    mmp?: boolean;
+    api?: boolean;
+    web?: boolean;
+    replaced?: boolean;
+    is_liquidation?: boolean;
+    risk_reducing?: boolean;
+    user_id?: number;
+  };
+  trades: Array<{
+    trade_id: string;
+    instrument_name: string;
+    order_id: string;
+    direction: 'buy' | 'sell';
+    amount: number;
+    price: number;
+    timestamp: number;
+    role: 'maker' | 'taker';
+    fee: number;
+    fee_currency: string;
+  }>;
+}
+
 export class DeribitClient {
   private configLoader: ConfigLoader;
   private publicAPI: DeribitPublicAPI;
@@ -350,7 +391,7 @@ export class DeribitClient {
     orderType: 'market' | 'limit' = 'market',
     price?: number,
     accessToken?: string
-  ): Promise<any> {
+  ): Promise<DeribitOrderResponse> {
     try {
       if (!accessToken) {
         throw new Error('Access token required for private API calls');
@@ -395,7 +436,7 @@ export class DeribitClient {
     price?: number,
     accessToken?: string,
     label?: string
-  ): Promise<any> {
+  ): Promise<DeribitOrderResponse> {
     try {
       if (!accessToken) {
         throw new Error('Access token required for private API calls');

@@ -109,6 +109,7 @@ export interface OptionTradingParams {
   delta1?: number;                       // 期权Delta值，用于开仓时选择期权，同时记录到move_position_delta字段
   delta2?: number;                       // 目标Delta值，用于将非立即成交的开仓订单记录到delta数据库
   n?: number;                           // 最小到期天数，用于开仓时选择期权
+  tv_id?: number;                       // TradingView信号ID，用于记录到delta数据库
 }
 
 // 期权交易结果接口

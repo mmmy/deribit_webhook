@@ -405,7 +405,7 @@ app.post('/webhook/signal', async (req, res) => {
     const payload = req.body as WebhookSignalPayload;
 
     // 2. 验证必需字段
-    const requiredFields = ['accountName', 'side', 'symbol', 'size'];
+    const requiredFields = ['accountName', 'side', 'symbol', 'size', 'qtyType'];
     const missingFields = requiredFields.filter(field => !payload[field as keyof WebhookSignalPayload]);
 
     if (missingFields.length > 0) {

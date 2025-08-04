@@ -55,6 +55,7 @@ export class OptionTradingService {
       }
 
       // 3. 解析交易信号
+      // 解析tv_id并传递到交易参数中，最后触发交易存到Delta数据库
       const tradingParams = this.parseSignalToTradingParams(payload);
       // 🔴 DEBUG BREAKPOINT: 在这里设置断点 - 交易参数解析
       console.log('📊 Parsed trading parameters:', tradingParams);
@@ -110,7 +111,8 @@ export class OptionTradingService {
       qtyType: payload.qtyType || 'fixed',
       delta1: payload.delta1, // 传递期权选择Delta值，同时用于记录到move_position_delta
       delta2: payload.delta2, // 传递目标Delta值
-      n: payload.n // 传递最小到期天数
+      n: payload.n, // 传递最小到期天数
+      tv_id: payload.tv_id // 传递TradingView信号ID
     };
   }
 
@@ -632,7 +634,7 @@ export class OptionTradingService {
     price: number
   ): Promise<void> {
     try {
-      console.log(`🔍 handleNonImmediateOrder called with delta1: ${params.delta1}, delta2: ${params.delta2}`);
+      console.log(`🔍 handleNonImmediateOrder called with delta1: ${params.delta1}, delta2: ${params.delta2}, tv_id: ${params.tv_id}`);
 
       // 检查是否为开仓订单且有delta1或delta2参数
       const isOpeningOrder = params.action === 'open';
@@ -657,12 +659,12 @@ export class OptionTradingService {
           move_position_delta: params.delta1 || 0, // delta1记录到move_position_delta字段，如果没有则默认为0
           min_expire_days: params.n || null, // 使用n参数作为最小到期天数，如果没有则为null
           order_id: recordType === DeltaRecordType.ORDER ? (orderResult.order?.order_id || '') : null,
-          tv_id: null, // 暂时设为null，后续可以从webhook payload中获取
+          tv_id: params.tv_id || null, // 从webhook payload中获取TradingView信号ID
           record_type: recordType
         };
 
         this.deltaManager.createRecord(deltaRecord);
-        console.log(`✅ Delta record created as ${recordType} for ${orderResult.order?.order_id} with delta1=${params.delta1} (move_position_delta), delta2=${params.delta2} (target_delta)`);
+        console.log(`✅ Delta record created as ${recordType} for ${orderResult.order?.order_id} with delta1=${params.delta1} (move_position_delta), delta2=${params.delta2} (target_delta), tv_id=${params.tv_id}`);
       }
     } catch (error) {
       console.error('❌ Failed to handle non-immediate order:', error);
@@ -725,7 +727,7 @@ export class OptionTradingService {
         target_delta: Math.max(-1, Math.min(1, targetDelta)), // 确保在[-1, 1]范围内
         move_position_delta: Math.max(-1, Math.min(1, movePositionDelta)), // 确保在[-1, 1]范围内
         min_expire_days: params.n || null, // 使用n参数作为最小到期天数，如果没有则为null
-        tv_id: null, // 暂时设为null，后续可以从webhook payload中获取
+        tv_id: params.tv_id || null, // 从webhook payload中获取TradingView信号ID
         record_type: DeltaRecordType.POSITION // 策略完成后记录为仓位
       };
 
@@ -738,6 +740,7 @@ export class OptionTradingService {
         instrument_name: record.instrument_name,
         target_delta: record.target_delta,
         move_position_delta: record.move_position_delta,
+        tv_id: record.tv_id,
         executed_quantity: executionStats.executedQuantity,
         average_price: executionStats.averagePrice
       });

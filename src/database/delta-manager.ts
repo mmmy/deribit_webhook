@@ -2,14 +2,14 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 import {
-  AccountDeltaSummary,
-  CreateDeltaRecordInput,
-  DeltaRecord,
-  DeltaRecordQuery,
-  DeltaRecordStats,
-  DeltaRecordType,
-  InstrumentDeltaSummary,
-  UpdateDeltaRecordInput
+    AccountDeltaSummary,
+    CreateDeltaRecordInput,
+    DeltaRecord,
+    DeltaRecordQuery,
+    DeltaRecordStats,
+    DeltaRecordType,
+    InstrumentDeltaSummary,
+    UpdateDeltaRecordInput
 } from './types';
 
 /**
@@ -697,7 +697,8 @@ export class DeltaManager {
         const updated = this.updateRecord(existing.id!, {
           target_delta: input.target_delta,
           move_position_delta: input.move_position_delta,
-          min_expire_days: input.min_expire_days
+          min_expire_days: input.min_expire_days,
+          tv_id: input.tv_id
         });
         if (!updated) {
           throw new Error('更新现有仓位记录失败');

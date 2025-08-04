@@ -1,18 +1,18 @@
-import Decimal from 'decimal.js';
 import { ConfigLoader } from '../config';
 import { DeltaManager } from '../database/delta-manager';
 import { DeltaRecordType } from '../database/types';
 import {
-  DeribitPosition,
+  OptionTradingAction,
   OptionTradingParams,
   OptionTradingResult,
   WebhookSignalPayload
 } from '../types';
-import type { DeribitInstrumentDetail } from '../types/deribit-instrument';
-import type { DetailedPositionInfo, ExecutionStats, OpenOrderInfo, PositionInfo } from '../types/position-info';
+import type { DetailedPositionInfo } from '../types/position-info';
+import { correctOrderParameters, correctOrderPrice } from '../utils/price-correction';
 import { DeribitAuth } from './auth';
 import { DeribitClient } from './deribit-client';
 import { MockDeribitClient } from './mock-deribit';
+import { executePositionAdjustmentByTvId, executePositionCloseByTvId } from './position-adjustment';
 
 export class OptionTradingService {
   private deribitAuth: DeribitAuth;
@@ -82,17 +82,13 @@ export class OptionTradingService {
     // 确定交易方向
     const direction = payload.side.toLowerCase() === 'buy' ? 'buy' : 'sell';
     
-    // 确定开仓/平仓动作
-    let action: 'open' | 'close' = 'open';
-    
-    // 根据市场仓位变化判断开仓还是平仓
-    if (payload.marketPosition === 'flat' && payload.prevMarketPosition !== 'flat') {
-      action = 'close'; // 平仓到无仓位
-    } else if (payload.marketPosition !== 'flat' && payload.prevMarketPosition === 'flat') {
-      action = 'open';  // 从无仓位开仓
-    } else if (payload.marketPosition !== payload.prevMarketPosition) {
-      action = 'close'; // 仓位方向改变，先平仓
-    }
+    // 确定详细的交易动作
+    // 基于marketPosition和prevMarketPosition的状态变化来判断具体的交易动作
+    let action: OptionTradingAction = this.determineDetailedAction(
+      payload.marketPosition,
+      payload.prevMarketPosition,
+      payload.side
+    );
 
     // 解析数量
     const quantity = parseFloat(payload.size) || 1;
@@ -112,9 +108,93 @@ export class OptionTradingService {
       delta1: payload.delta1, // 传递期权选择Delta值，同时用于记录到move_position_delta
       delta2: payload.delta2, // 传递目标Delta值
       n: payload.n, // 传递最小到期天数
-      tv_id: payload.tv_id // 传递TradingView信号ID
+      tv_id: payload.tv_id, // 传递TradingView信号ID
+      seller: payload.seller  
     };
   }
+
+  /**
+   * 根据市场仓位变化确定详细的交易动作
+   */
+  private determineDetailedAction(
+    marketPosition: string,
+    prevMarketPosition: string,
+    side: string,
+    commentMsg?: string,
+  ): OptionTradingAction {
+    const currentPos = marketPosition.toLowerCase();
+    const prevPos = prevMarketPosition.toLowerCase();
+    const tradeSide = side.toLowerCase();
+
+    console.log(`🎯 Determining action: ${prevPos} → ${currentPos}, side: ${tradeSide}`);
+
+    // 情况1: 从无仓位开仓
+    if (prevPos === 'flat' && currentPos !== 'flat') {
+      if (currentPos === 'long') {
+        console.log('📈 Action: open_long (从无仓位开多仓)');
+        return 'open_long';
+      } else if (currentPos === 'short') {
+        console.log('📉 Action: open_short (从无仓位开空仓)');
+        return 'open_short';
+      }
+    }
+
+    // 情况2: 平仓到无仓位
+    if (currentPos === 'flat' && prevPos !== 'flat') {
+      if (prevPos === 'long') {
+        console.log('📈 Action: close_long (平多仓到无仓位)');
+        return commentMsg?.includes('止损') ? 'stop_long' : 'close_long';
+      } else if (prevPos === 'short') {
+        console.log('📉 Action: close_short (平空仓到无仓位)');
+        return commentMsg?.includes('止损') ? 'stop_short' : 'close_short';
+      }
+    }
+
+    // 情况3: 仓位方向改变 (long ↔ short)
+    if (prevPos !== 'flat' && currentPos !== 'flat' && prevPos !== currentPos) {
+      // 先平掉原有仓位，再开新仓位
+      if (prevPos === 'long') {
+        console.log('📈 Action: close_long (仓位方向改变，先平多仓)');
+        return 'close_long';
+      } else if (prevPos === 'short') {
+        console.log('📉 Action: close_short (仓位方向改变，先平空仓)');
+        return 'close_short';
+      }
+    }
+
+    // 情况4: 同方向仓位调整 (简化处理)
+    if (prevPos === currentPos && prevPos !== 'flat') {
+      // 同方向仓位变化，根据交易方向判断是加仓还是减仓
+      if (currentPos === 'long') {
+        if (tradeSide === 'buy') {
+          console.log('📈 Action: open_long (增加多仓)');
+          return 'open_long';
+        } else {
+          console.log('� Action: reduce_long (减少多仓)');
+          return 'reduce_long';
+        }
+      } else if (currentPos === 'short') {
+        if (tradeSide === 'sell') {
+          console.log('� Action: open_short (增加空仓)');
+          return 'open_short';
+        } else {
+          console.log('📉 Action: reduce_short (减少空仓)');
+          return 'reduce_short';
+        }
+      }
+    }
+
+    // 默认情况：根据交易方向判断
+    if (tradeSide === 'buy') {
+      console.log('📈 Action: open_long (默认买入开多)');
+      return 'open_long';
+    } else {
+      console.log('📉 Action: open_short (默认卖出开空)');
+      return 'open_short';
+    }
+  }
+
+
 
   /**
    * 执行期权交易 (使用delta1和n字段选择期权)
@@ -128,31 +208,53 @@ export class OptionTradingService {
       let instrumentName: string | undefined;
       
       // 如果是开仓操作且提供了delta1和n参数，使用getInstrumentByDelta选择期权
-      if (params.action === 'open' && payload.delta1 !== undefined && payload.n !== undefined) {
+      const isOpeningAction = ['open_long', 'open_short'].includes(params.action);
+      const isReducingAction = ['reduce_long', 'reduce_short'].includes(params.action);
+      const isCloseAction = ['close_long', 'close_short'].includes(params.action);
+      const isStopAction = ['stop_long', 'stop_short'].includes(params.action);
+
+      if (isOpeningAction && payload.delta1 !== undefined && payload.n !== undefined) {
         console.log(`🎯 Using delta-based option selection: delta=${payload.delta1}, minExpiredDays=${payload.n}`);
 
         // 解析symbol以确定currency和underlying
         const { currency, underlying } = this.parseSymbolForOptions(params.symbol);
         console.log(`📊 Parsed symbol ${params.symbol} → currency: ${currency}, underlying: ${underlying}`);
 
-        // 确定longSide (true=call, false=put)
-        // 简化逻辑: buy方向选择call期权，sell方向选择put期权
-        const longSide = params.direction === 'buy';
+        // 确定期权类型和交易方向
+        const isSeller = payload.seller || false;
+        let isCall: boolean; // true=call, false=put
+        let actualDirection: 'buy' | 'sell';
 
+        if (isSeller) {
+          // 期权卖方逻辑：
+          // 开多 = sell put (看涨，卖出看跌期权)
+          // 开空 = sell call (看跌，卖出看涨期权)
+          isCall = params.action === 'open_short'; // 开空时选择call，开多时选择put
+          actualDirection = 'sell'; // 卖方总是卖出
+          console.log(`🎯 Option seller mode: ${params.action} → ${actualDirection} ${isCall ? 'call' : 'put'}`);
+        } else {
+          // 期权买方逻辑（原有逻辑）：
+          // 开多 = buy call (看涨，买入看涨期权)
+          // 开空 = buy put (看跌，买入看跌期权)
+          isCall = params.action === 'open_long'; // 开多时选择call，开空时选择put
+          actualDirection = 'buy'; // 使用原始方向
+          console.log(`🎯 Option buyer mode: ${params.action} → ${actualDirection} ${isCall ? 'call' : 'put'}`);
+        }
         // 调用getInstrumentByDelta
         let deltaResult;
         if (useMockMode) {
-          deltaResult = await this.mockClient.getInstrumentByDelta(currency, payload.n, payload.delta1, longSide, underlying);
+          deltaResult = await this.mockClient.getInstrumentByDelta(currency, payload.n, payload.delta1, isCall, underlying);
         } else {
-          deltaResult = await this.deribitClient.getInstrumentByDelta(currency, payload.n, payload.delta1, longSide, underlying);
+          deltaResult = await this.deribitClient.getInstrumentByDelta(currency, payload.n, payload.delta1, isCall, underlying);
         }
         
         if (deltaResult) {
           instrumentName = deltaResult.instrument.instrument_name;
           console.log(`✅ Selected option instrument: ${instrumentName}`);
           
-          // 执行开仓交易
-          const orderResult = await this.placeOptionOrder(instrumentName, params, useMockMode);
+          // 执行开仓交易，使用实际交易方向
+          const modifiedParams = { ...params, direction: actualDirection };
+          const orderResult = await this.placeOptionOrder(instrumentName, modifiedParams, useMockMode);
           if (!orderResult.success) {
             return orderResult;
           }
@@ -162,14 +264,73 @@ export class OptionTradingService {
             message: `No suitable option found for delta=${payload.delta1}, minExpiredDays=${payload.n}`
           };
         }
-      } else {
-        // 平仓操作或未提供delta参数时，使用原有逻辑
-        instrumentName = this.generateMockInstrumentName(params.symbol, params.direction);
-        
-        // 执行平仓或无delta参数的交易
-        const orderResult = await this.placeOptionOrder(instrumentName, params, useMockMode);
-        if (!orderResult.success) {
-          return orderResult;
+      }
+
+      if (isReducingAction) {
+        if (params.tv_id) {
+          console.log(`✅ Reduce action detected, executing position adjustment for tv_id=${params.tv_id}`);
+          // 执行基于tv_id的仓位调整
+          return await executePositionAdjustmentByTvId(
+            params.accountName,
+            params.tv_id,
+            {
+              configLoader: this.configLoader,
+              deltaManager: this.deltaManager,
+              deribitAuth: this.deribitAuth,
+              deribitClient: this.deribitClient
+            }
+          );
+        } else {
+          console.error('❌ Reduce action detected, but no tv_id provided, skipping order placement');
+          return {
+            success: false,
+            message: 'Reduce action detected, but no tv_id provided'
+          };
+        }
+      }
+
+      if (isCloseAction) {
+        if (params.tv_id) {
+          console.log(`✅ Close action detected, executing position close for tv_id=${params.tv_id}`);
+
+          // 确定平仓比例，默认全平
+          const closeRatio = params.closeRatio || 1.0;
+
+          // 执行基于tv_id的仓位平仓
+          return await executePositionCloseByTvId(
+            params.accountName,
+            params.tv_id,
+            closeRatio,
+            false,
+            {
+              configLoader: this.configLoader,
+              deltaManager: this.deltaManager,
+              deribitAuth: this.deribitAuth,
+              deribitClient: this.deribitClient
+            }
+          );
+        } else {
+          console.error('❌ Close action detected, but no tv_id provided, skipping order placement');
+          return {
+            success: false,
+            message: 'Close action detected, but no tv_id provided'
+          };
+        }
+      }
+
+      if (isStopAction) {
+        if (params.tv_id) {
+          console.log(`✅ Stop action detected, executing position stop for tv_id=${params.tv_id}`);
+          return {
+            success: false,
+            message: 'Stop action detected, but not implemented yet'
+          };
+        } else {
+          console.error('❌ Stop action detected, but no tv_id provided, skipping order placement');
+          return {
+            success: false,
+            message: 'Stop action detected, but no tv_id provided'
+          };
         }
       }
 
@@ -237,11 +398,23 @@ export class OptionTradingService {
   /**
    * 生成模拟的期权合约名称
    */
-  private generateMockInstrumentName(symbol: string, direction: 'buy' | 'sell'): string {
+  private generateMockInstrumentName(symbol: string, action: OptionTradingAction, direction: 'buy' | 'sell'): string {
     const { currency, underlying } = this.parseSymbolForOptions(symbol);
     const expiry = this.getNextFridayExpiry();
     const strike = this.estimateStrike(underlying);
-    const optionType = direction === 'buy' ? 'C' : 'P'; // 简化逻辑：买入用看涨，卖出用看跌
+
+    // 根据详细的action类型确定期权类型
+    let optionType: string;
+    if (action === 'open_long' || action === 'reduce_short' || action === 'close_short') {
+      optionType = 'C'; // Call期权
+    } else if (action === 'open_short' || action === 'reduce_long' || action === 'close_long') {
+      optionType = 'P'; // Put期权
+    } else {
+      // 向后兼容：对于通用的open/close动作，使用原有逻辑
+      optionType = direction === 'buy' ? 'C' : 'P';
+    }
+
+    console.log(`🎯 Generated option type: ${optionType} for action: ${action}, direction: ${direction}`);
 
     // 根据currency类型生成不同格式的instrument name
     if (currency === 'USDC') {
@@ -284,125 +457,13 @@ export class OptionTradingService {
     return strikes[currency as keyof typeof strikes] || 1000;
   }
 
-  /**
-   * 根据分级tick size规则计算正确的tick size
-   */
-  private getCorrectTickSize(price: number, baseTickSize: number, tickSizeSteps?: any[]): number {
-    if (!tickSizeSteps || tickSizeSteps.length === 0) {
-      return baseTickSize;
-    }
+  // getCorrectTickSize函数已迁移到 src/utils/price-correction.ts
 
-    // 从高到低检查tick size steps
-    for (const step of tickSizeSteps.sort((a, b) => b.above_price - a.above_price)) {
-      if (price > step.above_price) {
-        return step.tick_size;
-      }
-    }
+  // correctOrderPrice函数已迁移到 src/utils/price-correction.ts
 
-    return baseTickSize;
-  }
+  // correctOrderAmount函数已迁移到 src/utils/price-correction.ts
 
-  /**
-   * 修正期权订单价格以符合Deribit要求
-   * 使用decimal.js解决浮点数精度问题
-   */
-  private correctOrderPrice(
-    price: number,
-    instrumentDetail: DeribitInstrumentDetail
-  ): { correctedPrice: number; tickSize: number; priceSteps: string } {
-    const {
-      tick_size: baseTickSize,
-      tick_size_steps: tickSizeSteps,
-      instrument_name: instrumentName
-    } = instrumentDetail;
-
-    // 计算正确的tick size
-    const correctTickSize = this.getCorrectTickSize(price, baseTickSize, tickSizeSteps);
-
-    // 使用Decimal.js进行精确计算
-    const priceDecimal = new Decimal(price);
-    const tickSizeDecimal = new Decimal(correctTickSize);
-
-    // 修正价格到最接近的tick size倍数
-    const steps = priceDecimal.dividedBy(tickSizeDecimal).toDecimalPlaces(0, Decimal.ROUND_HALF_UP);
-    const correctedPriceDecimal = steps.times(tickSizeDecimal);
-    const correctedPrice = correctedPriceDecimal.toNumber();
-
-    console.log(`🔧 Price correction for ${instrumentName}:`);
-    console.log(`   Original price: ${price} → Corrected: ${correctedPrice}`);
-    console.log(`   Base tick size: ${baseTickSize}, Used tick size: ${correctTickSize}`);
-    console.log(`   Price steps: ${steps.toString()}`);
-
-    if (tickSizeSteps && tickSizeSteps.length > 0) {
-      console.log(`   Tick size steps applied: ${JSON.stringify(tickSizeSteps)}`);
-    }
-
-    return {
-      correctedPrice,
-      tickSize: correctTickSize,
-      priceSteps: steps.toString()
-    };
-  }
-
-  /**
-   * 修正期权订单数量以符合Deribit要求
-   * 使用decimal.js解决浮点数精度问题
-   */
-  private correctOrderAmount(
-    amount: number,
-    instrumentDetail: DeribitInstrumentDetail
-  ): { correctedAmount: number; minTradeAmount: number; amountSteps: string } {
-    const {
-      min_trade_amount: minTradeAmount,
-      instrument_name: instrumentName
-    } = instrumentDetail;
-
-    // 使用Decimal.js进行精确计算
-    const amountDecimal = new Decimal(amount);
-    const minTradeAmountDecimal = new Decimal(minTradeAmount);
-
-    // 修正数量到最小交易量的倍数（向上取整）
-    const amountSteps = amountDecimal.dividedBy(minTradeAmountDecimal).toDecimalPlaces(0, Decimal.ROUND_UP);
-    const correctedAmountDecimal = amountSteps.times(minTradeAmountDecimal);
-    const correctedAmount = correctedAmountDecimal.toNumber();
-
-    console.log(`🔧 Amount correction for ${instrumentName}:`);
-    console.log(`   Original amount: ${amount} → Corrected: ${correctedAmount}`);
-    console.log(`   Min trade amount: ${minTradeAmount}`);
-    console.log(`   Amount steps: ${amountSteps.toString()}`);
-
-    return {
-      correctedAmount,
-      minTradeAmount,
-      amountSteps: amountSteps.toString()
-    };
-  }
-
-  /**
-   * 修正期权订单参数以符合Deribit要求（组合函数）
-   * 使用decimal.js解决浮点数精度问题
-   * 通用函数，支持所有货币的期权
-   */
-  private correctOrderParams(
-    price: number,
-    amount: number,
-    instrumentDetail: DeribitInstrumentDetail
-  ) {
-    // 分别修正价格和数量
-    const priceResult = this.correctOrderPrice(price, instrumentDetail);
-    const amountResult = this.correctOrderAmount(amount, instrumentDetail);
-
-    console.log(`🔧 Combined parameter correction for ${instrumentDetail.instrument_name}:`);
-    console.log(`   Price: ${price} → ${priceResult.correctedPrice} (steps: ${priceResult.priceSteps})`);
-    console.log(`   Amount: ${amount} → ${amountResult.correctedAmount} (steps: ${amountResult.amountSteps})`);
-
-    return {
-      correctedPrice: priceResult.correctedPrice,
-      correctedAmount: amountResult.correctedAmount,
-      tickSize: priceResult.tickSize,
-      minTradeAmount: amountResult.minTradeAmount
-    };
-  }
+  // correctOrderParams函数已迁移到 src/utils/price-correction.ts (使用correctOrderParameters)
 
   /**
    * 下单执行期权交易
@@ -502,7 +563,7 @@ export class OptionTradingService {
         }
 
         // 5. 修正订单参数以符合Deribit要求 - 使用期权工具信息
-        const correctedParams = this.correctOrderParams(entryPrice, orderQuantity, instrumentInfo);
+        const correctedParams = correctOrderParameters(entryPrice, orderQuantity, instrumentInfo);
         console.log(`🔧 Parameter correction: price ${entryPrice} → ${correctedParams.correctedPrice}, amount ${orderQuantity} → ${correctedParams.correctedAmount}`);
 
         // 使用修正后的参数
@@ -545,7 +606,7 @@ export class OptionTradingService {
           const r = 0.2
           const s = optionDetails.best_ask_price - optionDetails.best_bid_price
           let price = params.direction === 'buy' ? optionDetails.best_bid_price + s * r : (optionDetails.best_ask_price - s * r)
-          price = this.correctOrderPrice(price, instrumentInfo).correctedPrice;
+          price = correctOrderPrice(price, instrumentInfo).correctedPrice;
           // 使用普通限价单下单（不需要标签）
           const orderResult = await this.deribitClient.placeOrder(
             instrumentName,
@@ -561,17 +622,24 @@ export class OptionTradingService {
           // 执行移动价格策略并等待完成
           console.log(`🎯 Starting progressive limit strategy and waiting for completion...`);
 
-          const strategyResult = await this.executeProgressiveLimitStrategy({
-            orderId: orderResult.order.order_id,
-            instrumentName,
-            direction: params.direction,
-            quantity: finalQuantity,
-            initialPrice: finalPrice,
-            accountName: params.accountName,
-            instrumentDetail: instrumentInfo, // 传入工具详情用于价格修正
-            timeout: 8000,  // 8秒
-            maxStep: 3
-          });
+          const { executeProgressiveLimitStrategy: executeProgressiveLimitStrategyPure } = await import('./progressive-limit-strategy');
+          const strategyResult = await executeProgressiveLimitStrategyPure(
+            {
+              orderId: orderResult.order.order_id,
+              instrumentName,
+              direction: params.direction,
+              quantity: finalQuantity,
+              initialPrice: finalPrice,
+              accountName: params.accountName,
+              instrumentDetail: instrumentInfo, // 传入工具详情用于价格修正
+              timeout: 8000,  // 8秒
+              maxStep: 3
+            },
+            {
+              deribitAuth: this.deribitAuth,
+              deribitClient: this.deribitClient
+            }
+          );
 
           if (strategyResult.success) {
             console.log(`✅ Progressive strategy completed successfully:`, strategyResult);
@@ -637,7 +705,7 @@ export class OptionTradingService {
       console.log(`🔍 handleNonImmediateOrder called with delta1: ${params.delta1}, delta2: ${params.delta2}, tv_id: ${params.tv_id}`);
 
       // 检查是否为开仓订单且有delta1或delta2参数
-      const isOpeningOrder = params.action === 'open';
+      const isOpeningOrder = ['open', 'open_long', 'open_short'].includes(params.action);
       const hasDelta1 = params.delta1 !== undefined;
       const hasDelta2 = params.delta2 !== undefined;
       const orderState = orderResult.order?.order_state;
@@ -763,360 +831,11 @@ export class OptionTradingService {
     };
   }
 
-  /**
-   * 执行渐进式限价单策略
-   * 通过逐步移动价格来提高成交概率
-   * @returns 返回最终成交后的仓位信息
-   */
-  private async executeProgressiveLimitStrategy(params: {
-    orderId: string;
-    instrumentName: string;
-    direction: 'buy' | 'sell';
-    quantity: number;
-    initialPrice: number;
-    accountName: string;
-    instrumentDetail: DeribitInstrumentDetail; // 新增：工具详情，用于价格修正
-    timeout?: number;
-    maxStep?: number;
-  }): Promise<{
-    success: boolean;
-    finalOrderState?: string;
-    executedQuantity?: number;
-    averagePrice?: number;
-    positionInfo?: DetailedPositionInfo;
-    message: string;
-  }> {
-    const timeout = params.timeout || 8000; // 默认5秒
-    const maxStep = params.maxStep || 3;    // 默认最大6步
+  // executeProgressiveLimitStrategy函数已迁移到 src/services/progressive-limit-strategy.ts
 
-    console.log(`🎯 Starting progressive limit strategy for order ${params.orderId}, timeout: ${timeout}ms, maxStep: ${maxStep}`);
+  // checkOrderStatus函数已迁移到 src/services/progressive-limit-strategy.ts
 
-    let currentStep = 0;
+  // calculateProgressivePrice函数已迁移到 src/services/progressive-limit-strategy.ts
 
-    while (currentStep < maxStep) {
-      // 等待指定时间
-      await new Promise(resolve => setTimeout(resolve, timeout));
-      currentStep++;
-
-      try {
-        // 重新认证以确保token有效（因为策略可能执行30秒以上）
-        await this.deribitAuth.authenticate(params.accountName);
-        const tokenInfo = this.deribitAuth.getTokenInfo(params.accountName);
-        if (!tokenInfo) {
-          console.error(`❌ Failed to refresh token for account: ${params.accountName}`);
-          break;
-        }
-
-        // 检查订单状态
-        const orderStatus = await this.checkOrderStatus(params.orderId, tokenInfo.accessToken);
-        if (!orderStatus || orderStatus.order_state !== 'open') {
-          console.log(`✅ Order ${params.orderId} is no longer open (state: ${orderStatus?.order_state}), stopping strategy`);
-          break;
-        }
-
-        // 获取最新的盘口价格
-        const optionDetails = await this.deribitClient.getOptionDetails(params.instrumentName);
-        if (!optionDetails) {
-          console.error(`❌ Failed to get option details for ${params.instrumentName}`);
-          continue;
-        }
-
-        const bestBidPrice = optionDetails.best_bid_price || 0;
-        const bestAskPrice = optionDetails.best_ask_price || 0;
-
-        if (bestBidPrice <= 0 || bestAskPrice <= 0) {
-          console.error(`❌ Invalid bid/ask prices: bid=${bestBidPrice}, ask=${bestAskPrice}`);
-          continue;
-        }
-
-        // 计算新价格
-        const newPrice = this.calculateProgressivePrice(
-          params.direction,
-          params.initialPrice,
-          bestBidPrice,
-          bestAskPrice,
-          currentStep,
-          maxStep
-        );
-
-        // 使用correctOrderPrice函数修正新价格
-        const priceResult = this.correctOrderPrice(newPrice, params.instrumentDetail);
-        const correctedNewPrice = priceResult.correctedPrice;
-
-        console.log(`📈 Step ${currentStep}/${maxStep}: Moving price from current to ${correctedNewPrice} (original: ${newPrice}, bid: ${bestBidPrice}, ask: ${bestAskPrice})`);
-        console.log(`🔧 Price correction: ${newPrice} → ${correctedNewPrice} (tick size: ${priceResult.tickSize})`);
-
-        // 修改订单价格（只修改价格，不修改数量）
-        await this.updateOrderPrice(params.orderId, correctedNewPrice, tokenInfo.accessToken);
-
-      } catch (error) {
-        console.error(`❌ Error in progressive strategy step ${currentStep}:`, error);
-        // 继续下一步，不要因为单步失败而停止整个策略
-      }
-    }
-
-    // 如果达到最大步数还没成交，使用对手价格
-    if (currentStep >= maxStep) {
-      try {
-        console.log(`🚀 Reached max steps, using market price for final execution`);
-
-        await this.deribitAuth.authenticate(params.accountName);
-        const tokenInfo = this.deribitAuth.getTokenInfo(params.accountName);
-        if (!tokenInfo) {
-          console.error(`❌ Failed to refresh token for final execution`);
-          return {
-            success: false,
-            message: 'Failed to refresh token for final execution'
-          };
-        }
-
-        // 检查订单是否还存在
-        const orderStatus = await this.checkOrderStatus(params.orderId, tokenInfo.accessToken);
-        if (orderStatus && orderStatus.order_state === 'open') {
-          const optionDetails = await this.deribitClient.getOptionDetails(params.instrumentName);
-          if (optionDetails) {
-            const rawFinalPrice = params.direction === 'buy'
-              ? optionDetails.best_ask_price || params.initialPrice
-              : optionDetails.best_bid_price || params.initialPrice;
-
-            // 使用correctOrderPrice函数修正最终价格
-            const finalPriceResult = this.correctOrderPrice(rawFinalPrice, params.instrumentDetail);
-            const correctedFinalPrice = finalPriceResult.correctedPrice;
-
-            console.log(`💥 Final price adjustment: ${rawFinalPrice} → ${correctedFinalPrice} (tick size: ${finalPriceResult.tickSize})`);
-            await this.updateOrderPrice(params.orderId, correctedFinalPrice, tokenInfo.accessToken);
-          }
-        }
-      } catch (error) {
-        console.error(`❌ Error in final price adjustment:`, error);
-      }
-    }
-
-    console.log(`🏁 Progressive limit strategy completed for order ${params.orderId}`);
-
-    // 获取最终的订单状态和仓位信息
-    try {
-      await this.deribitAuth.authenticate(params.accountName);
-      const tokenInfo = this.deribitAuth.getTokenInfo(params.accountName);
-      if (!tokenInfo) {
-        return {
-          success: false,
-          message: 'Failed to authenticate for final position check'
-        };
-      }
-
-      // 检查最终订单状态
-      const finalOrderStatus = await this.checkOrderStatus(params.orderId, tokenInfo.accessToken);
-
-      let executedQuantity = 0;
-      let averagePrice = 0;
-      let finalOrderState = 'unknown';
-
-      if (finalOrderStatus) {
-        finalOrderState = finalOrderStatus.order_state;
-        executedQuantity = finalOrderStatus.filled_amount || 0;
-        averagePrice = finalOrderStatus.average_price || 0;
-      }
-
-      // 获取当前仓位信息
-      let positionInfo: DetailedPositionInfo | null = null;
-      try {
-        const startTime = Date.now();
-
-        // 获取相关的订单信息
-        const openOrders = await this.deribitClient.getOpenOrders(tokenInfo.accessToken, {
-          kind: 'option'
-        });
-
-        // 获取仓位信息（如果有的话）
-        let positions: DeribitPosition[] = [];
-        try {
-          positions = await this.deribitClient.getPositions(tokenInfo.accessToken, {
-            kind: 'option'
-          });
-        } catch (posError) {
-          console.log(`ℹ️ Positions API not available or no positions found:`, posError);
-        }
-
-        // 过滤相关数据
-        const relatedOrders = openOrders.filter((order: any) => order.instrument_name === params.instrumentName);
-        const relatedPositions = positions.filter((pos: any) => pos.instrument_name === params.instrumentName);
-
-        // 计算汇总信息
-        const totalUnrealizedPnl = relatedPositions.reduce((sum: number, pos: any) => sum + (pos.unrealized_pnl || 0), 0);
-        const totalRealizedPnl = relatedPositions.reduce((sum: number, pos: any) => sum + (pos.realized_pnl || 0), 0);
-        const totalMaintenanceMargin = relatedPositions.reduce((sum: number, pos: any) => sum + (pos.maintenance_margin || 0), 0);
-        const totalInitialMargin = relatedPositions.reduce((sum: number, pos: any) => sum + (pos.initial_margin || 0), 0);
-        const netDelta = relatedPositions.reduce((sum: number, pos: any) => sum + (pos.delta || 0), 0);
-
-        // 构建详细的仓位信息
-        positionInfo = {
-          // 订单相关信息
-          relatedOrders: relatedOrders as OpenOrderInfo[],
-          totalOpenOrders: openOrders.length,
-
-          // 仓位相关信息
-          positions: relatedPositions as PositionInfo[],
-          totalPositions: positions.length,
-
-          // 执行统计信息
-          executionStats: {
-            orderId: params.orderId,
-            instrumentName: params.instrumentName,
-            direction: params.direction,
-            requestedQuantity: params.quantity,
-            executedQuantity: executedQuantity,
-            averagePrice: averagePrice,
-            initialPrice: params.initialPrice,
-            finalPrice: averagePrice > 0 ? averagePrice : params.initialPrice,
-            totalSteps: currentStep,
-            executionTime: Date.now() - startTime,
-            priceMovements: [] // 这里可以记录价格移动历史
-          } as ExecutionStats,
-
-          // 汇总信息
-          summary: {
-            totalUnrealizedPnl,
-            totalRealizedPnl,
-            totalMaintenanceMargin,
-            totalInitialMargin,
-            netDelta
-          },
-
-          // 元数据
-          metadata: {
-            timestamp: Date.now(),
-            accountName: params.accountName,
-            currency: params.instrumentName.split('-')[0], // 从工具名称提取货币
-            dataSource: 'deribit_api' as const
-          }
-        };
-      } catch (error) {
-        console.error(`❌ Error getting position info:`, error);
-        positionInfo = {
-          relatedOrders: [],
-          totalOpenOrders: 0,
-          positions: [],
-          totalPositions: 0,
-          executionStats: {
-            orderId: params.orderId,
-            instrumentName: params.instrumentName,
-            direction: params.direction,
-            requestedQuantity: params.quantity,
-            executedQuantity: executedQuantity,
-            averagePrice: averagePrice,
-            initialPrice: params.initialPrice,
-            totalSteps: currentStep,
-            executionTime: 0,
-            priceMovements: []
-          } as ExecutionStats,
-          summary: {
-            totalUnrealizedPnl: 0,
-            totalRealizedPnl: 0,
-            totalMaintenanceMargin: 0,
-            totalInitialMargin: 0
-          },
-          metadata: {
-            timestamp: Date.now(),
-            accountName: params.accountName,
-            currency: params.instrumentName.split('-')[0],
-            dataSource: 'deribit_api' as const
-          },
-          error: `Failed to get position info: ${error}`
-        };
-      }
-
-      const isFullyExecuted = finalOrderState === 'filled';
-      const isPartiallyExecuted = executedQuantity > 0 && finalOrderState !== 'filled';
-
-      return {
-        success: true,
-        finalOrderState,
-        executedQuantity,
-        averagePrice,
-        positionInfo,
-        message: isFullyExecuted
-          ? `Order fully executed: ${executedQuantity} contracts at average price ${averagePrice}`
-          : isPartiallyExecuted
-          ? `Order partially executed: ${executedQuantity}/${params.quantity} contracts at average price ${averagePrice}`
-          : `Order not executed, final state: ${finalOrderState}`
-      };
-
-    } catch (error) {
-      console.error(`❌ Error getting final position info:`, error);
-      return {
-        success: false,
-        message: `Strategy completed but failed to get final position info: ${error}`
-      };
-    }
-  }
-
-  /**
-   * 检查订单状态
-   */
-  private async checkOrderStatus(orderId: string, accessToken: string): Promise<any> {
-    try {
-      // 通过订单ID获取订单状态
-      const orderStatus = await this.deribitClient.getOrderState(accessToken, orderId);
-      return orderStatus;
-    } catch (error) {
-      console.error(`❌ Error checking order status for ${orderId}:`, error);
-      return null;
-    }
-  }
-
-  /**
-   * 计算渐进式价格
-   */
-  private calculateProgressivePrice(
-    direction: 'buy' | 'sell',
-    initialPrice: number,
-    bestBidPrice: number,
-    bestAskPrice: number,
-    currentStep: number,
-    maxStep: number
-  ): number {
-    // 计算移动比例：从0.5开始，每步增加0.5/maxStep
-    // const moveRatio = 0.5 + (0.5 * currentStep / maxStep);
-    const moveRatio = 0.33
-
-    if (direction === 'buy') {
-      // 买单：从中间价向ask价移动
-      // 新价格 = best_bid_price + (best_ask_price - bestBidPrice) * moveRatio
-      return bestBidPrice + (bestAskPrice - bestBidPrice) * moveRatio;
-    } else {
-      // 卖单：从中间价向bid价移动
-      // 新价格 = best_ask_price - (bestAskPrice - best_bid_price) * moveRatio
-      return bestAskPrice - (bestAskPrice - bestBidPrice) * moveRatio;
-    }
-  }
-
-  /**
-   * 更新订单价格（只修改价格，不修改数量）
-   */
-  private async updateOrderPrice(
-    orderId: string,
-    newPrice: number,
-    accessToken: string
-  ): Promise<void> {
-    try {
-      // 先获取当前订单状态以获取数量
-      const orderStatus = await this.deribitClient.getOrderState(accessToken, orderId);
-      if (!orderStatus) {
-        throw new Error(`Order ${orderId} not found`);
-      }
-
-      // 使用edit接口修改订单价格（保持原有数量）
-      const result = await this.deribitClient.editOrder(accessToken, {
-        order_id: orderId,
-        amount: orderStatus.amount,
-        price: newPrice
-      });
-
-      console.log(`✅ Order ${orderId} price updated to ${newPrice}:`);
-    } catch (error) {
-      console.error(`❌ Error updating order price for ${orderId}:`, error);
-      throw error;
-    }
-  }
+  // updateOrderPrice函数已迁移到 src/services/progressive-limit-strategy.ts
 }

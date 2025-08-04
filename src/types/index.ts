@@ -83,6 +83,7 @@ export interface WebhookSignalPayload {
   delta1?: number;                       // 期权Delta值，用于开仓时选择期权，同时记录到move_position_delta字段
   n?: number;                           // 最小到期天数，用于开仓时选择期权，同时记录到min_expire_days字段
   delta2?: number;                       // 目标Delta值，用于将非立即成交的开仓订单记录到delta数据库
+  seller?: boolean;                       // 期权卖方
 }
 
 // Webhook响应接口
@@ -95,11 +96,22 @@ export interface WebhookResponse {
   requestId?: string;
 }
 
+// 期权交易动作类型
+export type OptionTradingAction =
+  | 'open_long'     // 开多仓
+  | 'open_short'    // 开空仓
+  | 'close_long'    // 平多仓
+  | 'close_short'   // 平空仓
+  | 'reduce_long'   // 减多仓
+  | 'reduce_short'  // 减空仓
+  | 'stop_long'     // 止损多仓
+  | 'stop_short';    // 止损空仓
+
 // 期权交易参数接口
 export interface OptionTradingParams {
   accountName: string;
   direction: 'buy' | 'sell';             // 交易方向
-  action: 'open' | 'close';              // 开仓/平仓
+  action: OptionTradingAction;           // 详细的交易动作
   symbol: string;                        // 原始交易对
   quantity: number;                      // 交易数量
   price?: number;                        // 限价 (可选)
@@ -110,6 +122,8 @@ export interface OptionTradingParams {
   delta2?: number;                       // 目标Delta值，用于将非立即成交的开仓订单记录到delta数据库
   n?: number;                           // 最小到期天数，用于开仓时选择期权
   tv_id?: number;                       // TradingView信号ID，用于记录到delta数据库
+  closeRatio?: number;                  // 平仓比例 (0-1, 1表示全平)
+  seller?: boolean;                       // 是否是期权卖方
 }
 
 // 期权交易结果接口

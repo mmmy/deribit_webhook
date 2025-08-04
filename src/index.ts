@@ -5,9 +5,9 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import path from 'path';
 import { DeribitPrivateAPI, createAuthInfo, getConfigByEnvironment } from './api';
-import { CreateDeltaRecordInput, DeltaManager, DeltaRecord, DeltaRecordType } from './database';
+import { CreateDeltaRecordInput, DeltaManager, DeltaRecordType } from './database';
 import { ConfigLoader, DeribitAuth, DeribitClient, LogManager, MockDeribitClient, OptionTradingService, WebhookResponse, WebhookSignalPayload } from './services';
-import { DeribitPosition, OptionTradingParams } from './types';
+import { executePositionAdjustment } from './services/position-adjustment';
 
 // Load environment variables
 dotenv.config();
@@ -1105,162 +1105,7 @@ app.post('/api/positions/stop-polling', (req, res) => {
 
 // ===== 仓位调整功能 =====
 
-/**
- * 执行仓位调整
- * @param params 调整参数
- */
-async function executePositionAdjustment(params: {
-  requestId: string;
-  accountName: string;
-  currentPosition: DeribitPosition;
-  deltaRecord: DeltaRecord;
-  accessToken: string;
-}) {
-  const { requestId, accountName, currentPosition, deltaRecord, accessToken } = params;
-
-  try {
-    console.log(`🔄 [${requestId}] Starting position adjustment for ${currentPosition.instrument_name}`);
-
-    // 提取货币信息
-    const currency = currentPosition.instrument_name.split('-')[0]; // BTC, ETH, SOL
-
-    // 1. 根据latestRecord.move_position_delta 获取新的期权工具
-    console.log(`📊 [${requestId}] Getting instrument by delta: currency=${currency}, delta=${deltaRecord.move_position_delta}`);
-
-    // 确定方向：如果move_position_delta为正，选择看涨期权；为负，选择看跌期权
-    const longSide = deltaRecord.move_position_delta > 0;
-
-    // 获取新的期权工具
-    const deltaResult = await deribitClient.getInstrumentByDelta(
-      currency,
-      deltaRecord.min_expire_days || 7, // 最小到期天数，默认7天
-      Math.abs(deltaRecord.move_position_delta), // 目标delta值
-      longSide
-    );
-
-    // 2. 如果deltaResult不为空, 则执行下面步骤
-    if (!deltaResult || !deltaResult.instrument) {
-      console.log(`❌ [${requestId}] No suitable instrument found for delta ${deltaRecord.move_position_delta}`);
-      return {
-        success: false,
-        reason: 'No suitable instrument found',
-        deltaRecord: deltaRecord
-      };
-    }
-
-    console.log(`✅ [${requestId}] Found target instrument: ${deltaResult.instrument.instrument_name}`);
-
-    // 3. 使用 Deribit /private/close_position API 平掉当前仓位
-    console.log(`📉 [${requestId}] Closing current position: ${currentPosition.instrument_name}, size: ${currentPosition.size}`);
-
-    // 创建 Deribit Private API 实例
-    const isTestEnv = process.env.USE_TEST_ENVIRONMENT === 'true';
-    const apiConfig = getConfigByEnvironment(isTestEnv);
-    const authInfo = createAuthInfo(accessToken);
-    const privateAPI = new DeribitPrivateAPI(apiConfig, authInfo);
-
-    let closeResult: any;
-    try {
-      closeResult = await privateAPI.closePosition({
-        instrument_name: currentPosition.instrument_name,
-        type: 'market'  // 使用市价单快速平仓
-      });
-
-      console.log(`✅ [${requestId}] Position closed successfully:`, closeResult);
-
-    } catch (closeError) {
-      console.log(`❌ [${requestId}] Failed to close position: ${closeError}`);
-      return {
-        success: false,
-        reason: 'Failed to close position',
-        error: closeError instanceof Error ? closeError.message : String(closeError),
-        deltaRecord: deltaRecord
-      };
-    }
-
-    // 4. 第3步成功后, 删除数据库记录
-    console.log(`🗑️ [${requestId}] Deleting delta record: ID ${deltaRecord.id}`);
-
-    let deleteSuccess = false;
-    if (deltaRecord.id) {
-      deleteSuccess = deltaManager.deleteRecord(deltaRecord.id);
-      if (!deleteSuccess) {
-        console.warn(`⚠️ [${requestId}] Failed to delete delta record ${deltaRecord.id}, but position was closed`);
-      } else {
-        console.log(`✅ [${requestId}] Delta record deleted successfully`);
-      }
-    } else {
-      console.warn(`⚠️ [${requestId}] Delta record has no ID, cannot delete`);
-    }
-
-    // 5. 使用 OptionTradingService.placeOptionOrder 开仓
-    console.log(`📈 [${requestId}] Opening new position: ${deltaResult.instrument.instrument_name}`);
-
-    const newDirection = deltaRecord.move_position_delta > 0 ? 'buy' : 'sell';
-    const newQuantity = Math.abs(currentPosition.size);
-
-    // 构造 OptionTradingParams
-    const tradingParams: OptionTradingParams = {
-      symbol: currency,
-      action: 'open',
-      direction: newDirection,
-      quantity: newQuantity,
-      orderType: 'limit',
-      accountName: accountName,
-      delta1: deltaRecord.move_position_delta,
-      delta2: deltaRecord.target_delta,
-      n: deltaRecord.min_expire_days || undefined
-    };
-
-    // 检查是否使用Mock模式
-    const useMockMode = process.env.USE_MOCK_MODE === 'true';
-
-    const newOrderResult = await optionTradingService.placeOptionOrder(
-      deltaResult.instrument.instrument_name,
-      tradingParams,
-      useMockMode
-    );
-
-    if (!newOrderResult.success) {
-      console.log(`❌ [${requestId}] Failed to open new position: ${newOrderResult.message}`);
-      return {
-        success: false,
-        reason: 'Failed to open new position',
-        error: newOrderResult.message,
-        closeResult: closeResult,
-        deltaRecordDeleted: deleteSuccess
-      };
-    }
-
-    console.log(`✅ [${requestId}] New position opened successfully: ${newOrderResult.orderId}`);
-
-    // 返回成功结果
-    return {
-      success: true,
-      closeResult: closeResult,
-      newOrderResult: newOrderResult,
-      deltaRecordDeleted: deleteSuccess,
-      oldInstrument: currentPosition.instrument_name,
-      newInstrument: deltaResult.instrument.instrument_name,
-      adjustmentSummary: {
-        oldSize: currentPosition.size,
-        oldDelta: currentPosition.delta,
-        newDirection: newDirection,
-        newQuantity: newQuantity,
-        targetDelta: deltaRecord.move_position_delta
-      }
-    };
-
-  } catch (error) {
-    console.error(`💥 [${requestId}] Position adjustment failed:`, error);
-    return {
-      success: false,
-      reason: 'Exception during adjustment',
-      error: error instanceof Error ? error.message : 'Unknown error',
-      deltaRecord: deltaRecord
-    };
-  }
-}
+// executePositionAdjustment函数已迁移到 src/services/position-adjustment.ts
 
 // ===== 定时轮询功能 =====
 
@@ -1393,13 +1238,20 @@ async function pollAllAccountsPositions() {
                     }
 
                     // 触发仓位调整
-                    const adjustmentResult = await executePositionAdjustment({
-                      requestId,
-                      accountName: account.name,
-                      currentPosition: pos,
-                      deltaRecord: latestRecord,
-                      accessToken: tokenInfo.accessToken
-                    });
+                    const adjustmentResult = await executePositionAdjustment(
+                      {
+                        requestId,
+                        accountName: account.name,
+                        currentPosition: pos,
+                        deltaRecord: latestRecord,
+                        accessToken: tokenInfo.accessToken
+                      },
+                      {
+                        deribitClient,
+                        deltaManager,
+                        deribitAuth
+                      }
+                    );
 
                     if (adjustmentResult.success) {
                       // 发送成功通知到企业微信

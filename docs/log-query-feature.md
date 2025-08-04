@@ -113,11 +113,12 @@ GET /api/logs?keyword=error&maxRecords=50
    - `../logs/error.log`
 
 3. **PM2日志轮转文件**
-   - `../logs/combined-0.log` (最新)
-   - `../logs/combined-1.log`
-   - `../logs/out-0.log`
-   - `../logs/error-0.log`
-   - 自动扫描所有轮转文件
+   - `../logs/combined-0.log`
+   - `../logs/combined-0__2025-08-03_00-00-00.log`
+   - `../logs/out-1__2025-08-02_23-59-59.log`
+   - `../logs/error-2.log`
+   - 支持任意格式的轮转文件名
+   - 自动扫描所有匹配的轮转文件
 
 4. **用户主目录**
    - `~/logs/combined.log`
@@ -146,16 +147,19 @@ GET /api/logs?keyword=error&maxRecords=50
 系统支持PM2的`pm2-logrotate`插件产生的轮转日志文件：
 
 ### 轮转文件格式
-- `combined-0.log` - 最新的日志文件
-- `combined-1.log` - 第一次轮转的文件
-- `combined-2.log` - 第二次轮转的文件
-- 以此类推...
+支持各种PM2日志轮转文件格式：
+- `combined-0.log` - 标准轮转格式
+- `combined-0__2025-08-03_00-00-00.log` - 带时间戳的轮转格式
+- `out-1__2025-08-02_23-59-59.log` - 输出日志轮转
+- `error-2.log` - 错误日志轮转
+- 任何以 `combined-`、`out-`、`error-` 开头的 `.log` 文件
 
 ### 自动发现机制
 1. **智能扫描**：自动扫描日志目录中的所有轮转文件
-2. **排序优化**：按文件新旧程度排序，优先读取最新文件
-3. **类型识别**：支持combined、out、error三种类型的轮转文件
-4. **去重处理**：避免重复读取相同的日志文件
+2. **灵活匹配**：只要文件名以 `combined-`、`out-`、`error-` 开头且以 `.log` 结尾即可
+3. **时间排序**：按文件修改时间排序，优先读取最新文件
+4. **类型识别**：支持combined、out、error三种类型的轮转文件
+5. **去重处理**：避免重复读取相同的日志文件
 
 ### 配置建议
 ```bash

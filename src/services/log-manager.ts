@@ -77,8 +77,9 @@ export class LogManager {
     try {
       const files = fs.readdirSync(logDir);
 
-      // 匹配 PM2 日志轮转文件格式: combined-0.log, combined-1.log, out-0.log, error-0.log 等
-      const logRotatePattern = /^(combined|out|error)-\d+\.log$/;
+      // 匹配 PM2 日志轮转文件格式: 只要开头是 combined、out 或 error 即可
+      // 支持各种格式: combined-0.log, combined-0__2025-08-03_00-00-00.log 等
+      const logRotatePattern = /^(combined|out|error)-.*\.log$/;
 
       files.forEach(file => {
         if (logRotatePattern.test(file)) {
@@ -89,25 +90,18 @@ export class LogManager {
         }
       });
 
-      // 按文件名排序，确保最新的文件在前面（combined-0.log 是最新的）
+      // 按文件修改时间排序，确保最新的文件在前面
       rotateFiles.sort((a, b) => {
-        const aMatch = path.basename(a).match(/(\w+)-(\d+)\.log$/);
-        const bMatch = path.basename(b).match(/(\w+)-(\d+)\.log$/);
+        try {
+          const aStats = fs.statSync(a);
+          const bStats = fs.statSync(b);
 
-        if (aMatch && bMatch) {
-          const aType = aMatch[1];
-          const bType = bMatch[1];
-          const aNum = parseInt(aMatch[2]);
-          const bNum = parseInt(bMatch[2]);
-
-          // 先按类型排序，再按数字排序（数字小的在前）
-          if (aType !== bType) {
-            return aType.localeCompare(bType);
-          }
-          return aNum - bNum;
+          // 按修改时间倒序排列（最新的在前）
+          return bStats.mtime.getTime() - aStats.mtime.getTime();
+        } catch {
+          // 如果获取文件状态失败，按文件名排序
+          return a.localeCompare(b);
         }
-
-        return a.localeCompare(b);
       });
 
     } catch (error) {

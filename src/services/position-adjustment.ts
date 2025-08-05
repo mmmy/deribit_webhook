@@ -5,7 +5,7 @@
 
 import { ConfigLoader } from '../config';
 import { DeltaManager } from '../database/delta-manager';
-import { DeltaRecord, DeltaRecordType } from '../database/types';
+import { DeltaRecord } from '../database/types';
 import { DeribitPosition } from '../types';
 import { correctOrderAmount, correctSmartPrice } from '../utils/price-correction';
 import { DeribitAuth } from './auth';
@@ -172,7 +172,7 @@ export async function executePositionCloseByTvId(
     const deltaRecords = deltaManager.getRecords({
       account_id: accountName,
       tv_id: tvId,
-      record_type: DeltaRecordType.POSITION
+      // record_type: DeltaRecordType.POSITION
     });
 
     if (deltaRecords.length === 0) {
@@ -254,6 +254,17 @@ export async function executePositionCloseByTvId(
     // 6. 汇总结果
     const successCount = closeResults.filter(r => r.success).length;
     const totalCount = closeResults.length;
+
+    // 7. 如果有成功的平仓操作，删除Delta数据库中对应tv_id的所有记录
+    if (successCount > 0) {
+      try {
+        const deletedCount = services.deltaManager.deleteRecords({ tv_id: tvId });
+        console.log(`🗑️ Deleted ${deletedCount} delta records for tv_id: ${tvId} after successful position close`);
+      } catch (error) {
+        console.error(`❌ Failed to delete delta records for tv_id ${tvId}:`, error);
+        // 删除失败不影响平仓结果，只记录错误
+      }
+    }
 
     return {
       success: successCount > 0,
@@ -446,7 +457,7 @@ export async function executePositionAdjustmentByTvId(
     const deltaRecords = deltaManager.getRecords({
       account_id: accountName,
       tv_id: tvId,
-      record_type: DeltaRecordType.POSITION
+      // record_type: DeltaRecordType.POSITION
     });
 
     if (deltaRecords.length === 0) {

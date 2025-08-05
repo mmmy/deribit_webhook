@@ -9,6 +9,7 @@ import {
 } from '../types';
 import type { DetailedPositionInfo } from '../types/position-info';
 import { correctOrderParameters, correctOrderPrice } from '../utils/price-correction';
+import { calculateSpreadRatio, formatSpreadRatioAsPercentage, isSpreadTooWide } from '../utils/spread-calculation';
 import { DeribitAuth } from './auth';
 import { DeribitClient } from './deribit-client';
 import { MockDeribitClient } from './mock-deribit';
@@ -573,12 +574,13 @@ export class OptionTradingService {
         // 6. 调用Deribit下单API - 使用修正后的参数
         console.log(`📋 Placing order: ${params.direction} ${finalQuantity} contracts of ${instrumentName} at price ${finalPrice}`);
 
-        const spreadRatio  = Math.abs(optionDetails.best_ask_price - optionDetails.best_bid_price) / (optionDetails.best_bid_price + optionDetails.best_ask_price) * 2
-        console.log('盘口价差:', spreadRatio);
+        // 使用统一的价差比率计算函数
+        const spreadRatio = calculateSpreadRatio(optionDetails.best_bid_price, optionDetails.best_ask_price);
+        console.log('盘口价差:', formatSpreadRatioAsPercentage(spreadRatio));
 
         // 从环境变量读取价差比率阈值，默认0.15
         const spreadRatioThreshold = parseFloat(process.env.SPREAD_RATIO_THRESHOLD || '0.15');
-        if (spreadRatio > spreadRatioThreshold) {
+        if (isSpreadTooWide(optionDetails.best_bid_price, optionDetails.best_ask_price, spreadRatioThreshold)) {
           const orderResult = await this.deribitClient.placeOrder(
             instrumentName,
             params.direction,

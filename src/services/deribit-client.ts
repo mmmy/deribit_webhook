@@ -7,6 +7,7 @@ import type {
   OptionDetails,
 } from "../types";
 import type { DeribitInstrumentDetail } from "../types/deribit-instrument";
+import { calculateSpreadRatio } from "../utils/spread-calculation";
 
 // Deribit订单响应类型
 export interface DeribitOrderResponse {
@@ -297,12 +298,8 @@ export class DeribitClient {
             ) {
               const deltaDistance = Math.abs(details.greeks.delta - delta);
 
-              // 计算价差比率: (卖1价 - 买1价)/(买1价 + 卖1价)
-              const spreadRatio =
-                details.best_ask_price > 0 && details.best_bid_price > 0
-                  ? (details.best_ask_price - details.best_bid_price) /
-                    (details.best_ask_price + details.best_bid_price)
-                  : 1; // 如果没有价格数据，设置为最大价差
+              // 使用统一的价差比率计算函数
+              const spreadRatio = calculateSpreadRatio(details.best_bid_price, details.best_ask_price); // 如果没有价格数据，设置为最大价差
 
               optionsWithDelta.push({
                 instrument,

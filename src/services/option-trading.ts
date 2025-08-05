@@ -1,20 +1,19 @@
 import { ConfigLoader } from '../config';
 import { DeltaManager } from '../database/delta-manager';
-import { DeltaRecordType } from '../database/types';
 import {
   OptionTradingAction,
   OptionTradingParams,
   OptionTradingResult,
   WebhookSignalPayload
 } from '../types';
-import type { DetailedPositionInfo } from '../types/position-info';
-import { correctOrderParameters, correctOrderPrice } from '../utils/price-correction';
-import { calculateSpreadRatio, formatSpreadRatioAsPercentage, isSpreadTooWide } from '../utils/spread-calculation';
 import { DeribitAuth } from './auth';
 import { DeribitClient } from './deribit-client';
 import { MockDeribitClient } from './mock-deribit';
+import { OrderSupportDependencies } from './order-support-functions';
+import { placeOptionOrder as placeOptionOrderPure, PlaceOrderDependencies } from './place-option-order';
 import { executePositionAdjustmentByTvId, executePositionCloseByTvId } from './position-adjustment';
-import { WeChatNotificationService } from './wechat-notification';
+import { wechatNotification } from './wechat-notification';
+
 
 export class OptionTradingService {
   private deribitAuth: DeribitAuth;
@@ -22,7 +21,6 @@ export class OptionTradingService {
   private deribitClient: DeribitClient;
   private mockClient: MockDeribitClient;
   private deltaManager: DeltaManager;
-  private wechatNotification: WeChatNotificationService;
 
   constructor() {
     this.deribitAuth = new DeribitAuth();
@@ -30,7 +28,6 @@ export class OptionTradingService {
     this.deribitClient = new DeribitClient();
     this.mockClient = new MockDeribitClient();
     this.deltaManager = new DeltaManager();
-    this.wechatNotification = new WeChatNotificationService();
   }
 
   /**
@@ -91,7 +88,8 @@ export class OptionTradingService {
     let action: OptionTradingAction = this.determineDetailedAction(
       payload.marketPosition,
       payload.prevMarketPosition,
-      payload.side
+      payload.side,
+      payload.comment,
     );
 
     // 解析数量
@@ -113,7 +111,6 @@ export class OptionTradingService {
       delta2: payload.delta2, // 传递目标Delta值
       n: payload.n, // 传递最小到期天数
       tv_id: payload.tv_id, // 传递TradingView信号ID
-      seller: payload.seller  
     };
   }
 
@@ -225,25 +222,23 @@ export class OptionTradingService {
         console.log(`📊 Parsed symbol ${params.symbol} → currency: ${currency}, underlying: ${underlying}`);
 
         // 确定期权类型和交易方向
-        const isSeller = payload.seller || false;
-        let isCall: boolean; // true=call, false=put
+        // 根据 delta1 值决定期权类型：delta1 > 0 选择 call，否则选择 put
+        const delta1 = payload.delta1 || 0;
+        const isCall = delta1 > 0;
+
+        // 根据期权类型和操作确定实际交易方向
         let actualDirection: 'buy' | 'sell';
 
-        if (isSeller) {
-          // 期权卖方逻辑：
-          // 开多 = sell put (看涨，卖出看跌期权)
-          // 开空 = sell call (看跌，卖出看涨期权)
-          isCall = params.action === 'open_short'; // 开空时选择call，开多时选择put
-          actualDirection = 'sell'; // 卖方总是卖出
-          console.log(`🎯 Option seller mode: ${params.action} → ${actualDirection} ${isCall ? 'call' : 'put'}`);
+        if (isCall) {
+          // Call 期权：open_long = buy, 其他 = sell
+          actualDirection = params.action === 'open_long' ? 'buy' : 'sell';
         } else {
-          // 期权买方逻辑（原有逻辑）：
-          // 开多 = buy call (看涨，买入看涨期权)
-          // 开空 = buy put (看跌，买入看跌期权)
-          isCall = params.action === 'open_long'; // 开多时选择call，开空时选择put
-          actualDirection = 'buy'; // 使用原始方向
-          console.log(`🎯 Option buyer mode: ${params.action} → ${actualDirection} ${isCall ? 'call' : 'put'}`);
+          // Put 期权：open_short = buy, 其他 = sell
+          actualDirection = params.action === 'open_short' ? 'buy' : 'sell';
         }
+
+        console.log(`🎯 Option selection: delta1=${delta1} → ${isCall ? 'call' : 'put'} option, action=${params.action} → ${actualDirection}`);
+
         // 调用getInstrumentByDelta
         let deltaResult;
         if (useMockMode) {
@@ -273,17 +268,46 @@ export class OptionTradingService {
       if (isReducingAction) {
         if (params.tv_id) {
           console.log(`✅ Reduce action detected, executing position adjustment for tv_id=${params.tv_id}`);
+
+          // 发送调仓开始通知到企业微信
+          await this.sendPositionAdjustmentNotification(
+            params.accountName,
+            params.tv_id,
+            'START',
+            {
+              symbol: params.symbol,
+              action: params.action,
+              direction: params.direction
+            }
+          );
+
           // 执行基于tv_id的仓位调整
-          return await executePositionAdjustmentByTvId(
+          const adjustmentResult = await executePositionAdjustmentByTvId(
             params.accountName,
             params.tv_id,
             {
               configLoader: this.configLoader,
               deltaManager: this.deltaManager,
               deribitAuth: this.deribitAuth,
-              deribitClient: this.deribitClient
+              deribitClient: this.deribitClient,
+              mockClient: this.mockClient
             }
           );
+
+          // 发送调仓结果通知到企业微信
+          await this.sendPositionAdjustmentNotification(
+            params.accountName,
+            params.tv_id,
+            adjustmentResult.success ? 'SUCCESS' : 'FAILED',
+            {
+              symbol: params.symbol,
+              action: params.action,
+              direction: params.direction,
+              result: adjustmentResult
+            }
+          );
+
+          return adjustmentResult;
         } else {
           console.error('❌ Reduce action detected, but no tv_id provided, skipping order placement');
           return {
@@ -300,8 +324,21 @@ export class OptionTradingService {
           // 确定平仓比例，默认全平
           const closeRatio = params.closeRatio || 1.0;
 
+          // 发送盈利平仓开始通知到企业微信
+          await this.sendProfitCloseNotification(
+            params.accountName,
+            params.tv_id,
+            'START',
+            {
+              symbol: params.symbol,
+              action: params.action,
+              direction: params.direction,
+              closeRatio: closeRatio
+            }
+          );
+
           // 执行基于tv_id的仓位平仓
-          return await executePositionCloseByTvId(
+          const closeResult = await executePositionCloseByTvId(
             params.accountName,
             params.tv_id,
             closeRatio,
@@ -313,6 +350,22 @@ export class OptionTradingService {
               deribitClient: this.deribitClient
             }
           );
+
+          // 发送盈利平仓结果通知到企业微信
+          await this.sendProfitCloseNotification(
+            params.accountName,
+            params.tv_id,
+            closeResult.success ? 'SUCCESS' : 'FAILED',
+            {
+              symbol: params.symbol,
+              action: params.action,
+              direction: params.direction,
+              closeRatio: closeRatio,
+              result: closeResult
+            }
+          );
+
+          return closeResult;
         } else {
           console.error('❌ Close action detected, but no tv_id provided, skipping order placement');
           return {
@@ -325,10 +378,41 @@ export class OptionTradingService {
       if (isStopAction) {
         if (params.tv_id) {
           console.log(`✅ Stop action detected, executing position stop for tv_id=${params.tv_id}`);
-          return {
-            success: false,
-            message: 'Stop action detected, but not implemented yet'
-          };
+
+          // 发送止损开始通知到企业微信
+          await this.sendStopLossNotification(
+            params.accountName,
+            params.tv_id,
+            'START',
+            {
+              symbol: params.symbol,
+              action: params.action,
+              direction: params.direction
+            }
+          );
+
+          // 执行止损逻辑：平仓50%
+          const stopResult = await this.executeStopLossLogic(
+            params.accountName,
+            params.tv_id,
+            0.5, // 平仓50%
+            useMockMode
+          );
+
+          // 发送止损结果通知到企业微信
+          await this.sendStopLossNotification(
+            params.accountName,
+            params.tv_id,
+            stopResult.success ? 'SUCCESS' : 'FAILED',
+            {
+              symbol: params.symbol,
+              action: params.action,
+              direction: params.direction,
+              result: stopResult
+            }
+          );
+
+          return stopResult;
         } else {
           console.error('❌ Stop action detected, but no tv_id provided, skipping order placement');
           return {
@@ -470,426 +554,512 @@ export class OptionTradingService {
   // correctOrderParams函数已迁移到 src/utils/price-correction.ts (使用correctOrderParameters)
 
   /**
-   * 下单执行期权交易
+   * 下单执行期权交易 - 使用纯函数实现
    */
   public async placeOptionOrder(instrumentName: string, params: OptionTradingParams, useMockMode: boolean): Promise<OptionTradingResult> {
-    console.log(`📋 Placing order for instrument: ${instrumentName}`);
-    
+    // 构建订单支持依赖
+    const orderSupportDependencies: OrderSupportDependencies = {
+      deltaManager: this.deltaManager,
+      configLoader: this.configLoader
+    };
+
+    // 构建依赖注入对象
+    const dependencies: PlaceOrderDependencies = {
+      deribitAuth: this.deribitAuth,
+      deribitClient: this.deribitClient,
+      mockClient: this.mockClient,
+      configLoader: this.configLoader,
+      orderSupportDependencies: orderSupportDependencies
+    };
+
+    // 调用纯函数
+    return await placeOptionOrderPure(instrumentName, params, useMockMode, dependencies);
+  }
+
+  /**
+   * 发送仓位调整通知到企业微信
+   * @param accountName 账户名称
+   * @param tvId TV信号ID
+   * @param status 状态：START, SUCCESS, FAILED
+   * @param details 详细信息
+   */
+  private async sendPositionAdjustmentNotification(
+    accountName: string,
+    tvId: number,
+    status: 'START' | 'SUCCESS' | 'FAILED',
+    details: {
+      symbol: string;
+      action: OptionTradingAction;
+      direction: 'buy' | 'sell';
+      result?: any;
+    }
+  ): Promise<void> {
     try {
-      if (useMockMode) {
-        // Mock模式：模拟下单
-        console.log(`[MOCK] Placing ${params.direction} order for ${params.quantity} contracts of ${instrumentName}`);
-
-        // 模拟网络延迟
-        await new Promise(resolve => setTimeout(resolve, 200));
-
-        // 模拟订单结果（非立即成交）
-        const mockOrderResult = {
-          order: {
-            order_id: `mock_order_${Date.now()}`,
-            order_state: 'open', // 模拟非立即成交状态
-            filled_amount: 0,
-            average_price: 0
-          }
-        };
-
-        // 检查是否为非立即成交的开仓订单，如果是则记录到delta数据库
-        console.log(`🔍 Checking for delta2 parameter: ${params.delta2}`);
-        await this.handleNonImmediateOrder(mockOrderResult, params, instrumentName, params.quantity, params.price || 0.05);
-
-        return {
-          success: true,
-          orderId: mockOrderResult.order.order_id,
-          message: `Successfully placed ${params.action} ${params.direction} order`,
-          instrumentName,
-          executedQuantity: params.quantity,
-          executedPrice: params.price || 0.05
-        };
-      } else {
-        // 真实模式：调用Deribit API下单
-        console.log(`[REAL] Placing ${params.direction} order for ${params.quantity} contracts of ${instrumentName}`);
-        
-        // 1. 获取账户信息和认证
-        const account = this.configLoader.getAccountByName(params.accountName);
-        if (!account) {
-          throw new Error(`Account not found: ${params.accountName}`);
-        }
-        
-        await this.deribitAuth.authenticate(params.accountName);
-        const tokenInfo = this.deribitAuth.getTokenInfo(params.accountName);
-        if (!tokenInfo) {
-          throw new Error(`Authentication failed for account: ${params.accountName}`);
-        }
-        
-        // 2. 获取期权工具信息（包含tick_size等）和价格信息
-        // 2.1 获取期权工具信息
-        const instrumentInfo = await this.deribitClient.getInstrument(instrumentName);
-        if (!instrumentInfo) {
-          throw new Error(`Failed to get instrument info for ${instrumentName}`);
-        }
-
-        // 2.2 获取期权价格信息
-        const optionDetails = await this.deribitClient.getOptionDetails(instrumentName);
-        if (!optionDetails) {
-          throw new Error(`Failed to get option details for ${instrumentName}`);
-        }
-
-        // 3. 计算入场价格 (买一 + 卖一) / 2
-        const entryPrice = (optionDetails.best_bid_price + optionDetails.best_ask_price) / 2;
-        console.log(`📊 Entry price calculated: ${entryPrice} (bid: ${optionDetails.best_bid_price}, ask: ${optionDetails.best_ask_price})`);
-        console.log(`📊 Instrument info: tick_size=${instrumentInfo.tick_size}, min_trade_amount=${instrumentInfo.min_trade_amount}`);
-
-        // 4. 计算下单数量
-        let orderQuantity = params.quantity;
-
-        // 如果qtyType是cash，将美元金额转换为合约数量
-        if (params.qtyType === 'cash') {
-          if (instrumentInfo.settlement_currency === 'USDC') {
-            // USDC期权：qtyType=cash表示USDC价值，直接使用不需要换算
-            orderQuantity = params.quantity;
-            console.log(`💰 USDC Cash mode: using ${params.quantity} USDC directly as quantity`);
-          } else {
-            // 传统期权：需要根据期权价格和指数价格换算
-            orderQuantity = params.quantity / (entryPrice * optionDetails.index_price);
-            console.log(`💰 Cash mode: converting $${params.quantity} to ${orderQuantity} contracts at price ${entryPrice}`);
-          }
-        } else if (params.qtyType === 'fixed') { // fixed表示是合约数量
-          console.log(`💰 Fixed mode: using ${params.quantity} contracts directly`);
-          if (instrumentInfo.settlement_currency === 'USDC') {
-            orderQuantity = params.quantity * (params.price || optionDetails.index_price);
-          } else {
-            orderQuantity = params.quantity / entryPrice;
-          }
-        }
-
-        if (orderQuantity <= 0) {
-          throw new Error(`Invalid order quantity: ${orderQuantity}`);
-        }
-
-        // 5. 修正订单参数以符合Deribit要求 - 使用期权工具信息
-        const correctedParams = correctOrderParameters(entryPrice, orderQuantity, instrumentInfo);
-        console.log(`🔧 Parameter correction: price ${entryPrice} → ${correctedParams.correctedPrice}, amount ${orderQuantity} → ${correctedParams.correctedAmount}`);
-
-        // 使用修正后的参数
-        const finalPrice = correctedParams.correctedPrice;
-        const finalQuantity = correctedParams.correctedAmount;
-        
-        // 6. 调用Deribit下单API - 使用修正后的参数
-        console.log(`📋 Placing order: ${params.direction} ${finalQuantity} contracts of ${instrumentName} at price ${finalPrice}`);
-
-        // 使用统一的价差比率计算函数
-        const spreadRatio = calculateSpreadRatio(optionDetails.best_bid_price, optionDetails.best_ask_price);
-        console.log('盘口价差:', formatSpreadRatioAsPercentage(spreadRatio));
-
-        // 从环境变量读取价差比率阈值，默认0.15
-        const spreadRatioThreshold = parseFloat(process.env.SPREAD_RATIO_THRESHOLD || '0.15');
-        if (isSpreadTooWide(optionDetails.best_bid_price, optionDetails.best_ask_price, spreadRatioThreshold)) {
-          const orderResult = await this.deribitClient.placeOrder(
-            instrumentName,
-            params.direction,
-            finalQuantity,
-            'limit', // 使用限价单以确保价格正确
-            finalPrice, // 使用修正后的价格
-            tokenInfo.accessToken
-          );
-          console.log(`✅ Order placed successfully:`, orderResult);
-  
-          // 检查是否为非立即成交的开仓订单，如果是则记录到delta数据库
-          await this.handleNonImmediateOrder(orderResult, params, instrumentName, finalQuantity, finalPrice);
-
-          // 发送通知到企业微信
-          const spreadPercentage = (spreadRatio * 100).toFixed(1);
-          const extraMsg = `盘口价差过大: ${spreadPercentage}%`;
-
-          await this.sendOrderNotification(params.accountName, {
-            instrumentName,
-            direction: orderResult.order?.direction,
-            quantity: finalQuantity,
-            price: finalPrice,
-            orderId: orderResult.order?.order_id || `deribit_${Date.now()}`,
-            orderState: orderResult.order?.order_state || 'unknown',
-            filledAmount: orderResult.order?.filled_amount || 0,
-            averagePrice: orderResult.order?.average_price || 0,
-            success: true,
-            extraMsg: extraMsg
-          });
-          return {
-            success: true,
-            orderId: orderResult.order?.order_id || `deribit_${Date.now()}`,
-            message: `Successfully placed ${params.direction} order for ${finalQuantity} contracts`,
-            instrumentName,
-            executedQuantity: orderResult.order?.filled_amount || finalQuantity,
-            executedPrice: orderResult.order?.average_price || finalPrice
-          };
-        } else {
-          // 盘口价差小，启用移动limit成交价格来成交
-          console.log(`📈 Spread is small, using progressive limit order strategy`);
-          const r = 0.2
-          const s = optionDetails.best_ask_price - optionDetails.best_bid_price
-          let price = params.direction === 'buy' ? optionDetails.best_bid_price + s * r : (optionDetails.best_ask_price - s * r)
-          price = correctOrderPrice(price, instrumentInfo).correctedPrice;
-          // 使用普通限价单下单（不需要标签）
-          const orderResult = await this.deribitClient.placeOrder(
-            instrumentName,
-            params.direction,
-            finalQuantity,
-            'limit',
-            price,
-            tokenInfo.accessToken
-          );
-
-          console.log(`📋 Initial order placed with order_id ${orderResult.order.order_id}:`, orderResult);
-
-          // 执行移动价格策略并等待完成
-          console.log(`🎯 Starting progressive limit strategy and waiting for completion...`);
-
-          const { executeProgressiveLimitStrategy: executeProgressiveLimitStrategyPure } = await import('./progressive-limit-strategy');
-          const strategyResult = await executeProgressiveLimitStrategyPure(
-            {
-              orderId: orderResult.order.order_id,
-              instrumentName,
-              direction: params.direction,
-              quantity: finalQuantity,
-              initialPrice: finalPrice,
-              accountName: params.accountName,
-              instrumentDetail: instrumentInfo, // 传入工具详情用于价格修正
-              timeout: 8000,  // 8秒
-              maxStep: 3
-            },
-            {
-              deribitAuth: this.deribitAuth,
-              deribitClient: this.deribitClient
-            }
-          );
-
-          if (strategyResult.success) {
-            console.log(`✅ Progressive strategy completed successfully:`, strategyResult);
-            // 将返回的仓位信息记录到delta数据库中
-            await this.recordPositionInfoToDatabase(strategyResult, params);
-
-            // 发送成功通知到企业微信
-            const spreadPercentage = (spreadRatio * 100).toFixed(1);
-            const extraMsg = `盘口价差: ${spreadPercentage}% (渐进式策略)`;
-
-            await this.sendOrderNotification(params.accountName, {
-              instrumentName,
-              direction: params.direction,
-              quantity: finalQuantity,
-              price: strategyResult.averagePrice || finalPrice,
-              orderId: orderResult.order.order_id,
-              orderState: strategyResult.finalOrderState || 'filled',
-              filledAmount: strategyResult.executedQuantity || finalQuantity,
-              averagePrice: strategyResult.averagePrice || finalPrice,
-              success: true,
-              extraMsg: extraMsg
-            });
-
-            return {
-              success: true,
-              orderId: orderResult.order.order_id,
-              message: `Progressive ${params.direction} order completed: ${strategyResult.message}`,
-              instrumentName,
-              executedQuantity: strategyResult.executedQuantity || finalQuantity,
-              executedPrice: strategyResult.averagePrice || finalPrice,
-              finalOrderState: strategyResult.finalOrderState,
-              positionInfo: strategyResult.positionInfo // 直接返回最终仓位信息
-            };
-          } else {
-            console.error(`❌ Progressive strategy failed:`, strategyResult.message);
-
-            // 发送失败通知到企业微信
-            const spreadPercentage = (spreadRatio * 100).toFixed(1);
-            const extraMsg = `盘口价差: ${spreadPercentage}% (渐进式策略失败)`;
-
-            await this.sendOrderNotification(params.accountName, {
-              instrumentName,
-              direction: params.direction,
-              quantity: finalQuantity,
-              price: finalPrice,
-              orderId: orderResult.order.order_id,
-              orderState: 'failed',
-              filledAmount: 0,
-              averagePrice: 0,
-              success: false,
-              extraMsg: extraMsg
-            });
-
-            return {
-              success: false,
-              orderId: orderResult.order.order_id,
-              message: `Progressive strategy failed: ${strategyResult.message}`,
-              instrumentName,
-              executedQuantity: 0,
-              executedPrice: finalPrice,
-              error: strategyResult.message
-            };
-          }
-        }
-        
+      // 检查企业微信通知服务是否可用
+      if (!wechatNotification.isAvailable()) {
+        console.log('📱 WeChat notification not available, skipping position adjustment notification');
+        return;
       }
+
+      const statusEmoji = {
+        START: '🔄',
+        SUCCESS: '✅',
+        FAILED: '❌'
+      };
+
+      const actionText: Record<OptionTradingAction, string> = {
+        open_long: '开多仓',
+        open_short: '开空仓',
+        close_long: '平多仓',
+        close_short: '平空仓',
+        reduce_long: '减多仓',
+        reduce_short: '减空仓',
+        stop_long: '止损多仓',
+        stop_short: '止损空仓'
+      };
+
+      const directionEmoji = details.direction === 'buy' ? '📈' : '📉';
+
+      let content = `${statusEmoji[status]} **仓位调整通知**
+
+${directionEmoji} **操作**: ${actionText[details.action] || details.action}
+📊 **交易对**: ${details.symbol}
+🔢 **TV信号ID**: ${tvId}
+👤 **账户**: ${accountName}
+⏰ **时间**: ${new Date().toLocaleString('zh-CN')}`;
+
+      if (status === 'START') {
+        content += `\n📋 **状态**: 开始执行调仓操作`;
+      } else if (status === 'SUCCESS') {
+        content += `\n📋 **状态**: 调仓操作成功完成`;
+        if (details.result?.executedQuantity) {
+          content += `\n📦 **执行数量**: ${details.result.executedQuantity}`;
+        }
+        if (details.result?.message) {
+          content += `\n💬 **详情**: ${details.result.message}`;
+        }
+      } else if (status === 'FAILED') {
+        content += `\n📋 **状态**: 调仓操作失败`;
+        if (details.result?.message) {
+          content += `\n❗ **错误**: ${details.result.message}`;
+        }
+      }
+
+      // 发送Markdown格式的通知
+      await wechatNotification.sendCustomMessage(content, false, accountName);
+
+      console.log(`📱 Position adjustment notification sent to WeChat for account: ${accountName}, status: ${status}`);
+
     } catch (error) {
-      console.error(`❌ Failed to place order for ${instrumentName}:`, error);
+      console.error('❌ Failed to send position adjustment notification to WeChat:', error);
+      // 通知发送失败不应该影响主要的交易流程，所以这里只记录错误
+    }
+  }
 
-      // 详细错误日志
-      if (error instanceof Error) {
-        console.error(`Error message: ${error.message}`);
-        if ((error as any).response) {
-          console.error(`HTTP Status: ${(error as any).response.status}`);
-          console.error(`Response data:`, JSON.stringify((error as any).response.data, null, 2));
+  /**
+   * 发送盈利平仓通知到企业微信
+   * @param accountName 账户名称
+   * @param tvId TV信号ID
+   * @param status 状态：START, SUCCESS, FAILED
+   * @param details 详细信息
+   */
+  private async sendProfitCloseNotification(
+    accountName: string,
+    tvId: number,
+    status: 'START' | 'SUCCESS' | 'FAILED',
+    details: {
+      symbol: string;
+      action: OptionTradingAction;
+      direction: 'buy' | 'sell';
+      closeRatio: number;
+      result?: any;
+    }
+  ): Promise<void> {
+    try {
+      // 检查企业微信通知服务是否可用
+      if (!wechatNotification.isAvailable()) {
+        console.log('📱 WeChat notification not available, skipping profit close notification');
+        return;
+      }
+
+      const statusEmoji = {
+        START: '💰',
+        SUCCESS: '✅',
+        FAILED: '❌'
+      };
+
+      const actionText: Record<OptionTradingAction, string> = {
+        open_long: '开多仓',
+        open_short: '开空仓',
+        close_long: '平多仓',
+        close_short: '平空仓',
+        reduce_long: '减多仓',
+        reduce_short: '减空仓',
+        stop_long: '止损多仓',
+        stop_short: '止损空仓'
+      };
+
+      const directionEmoji = details.direction === 'buy' ? '📈' : '📉';
+      const closeRatioText = details.closeRatio === 1.0 ? '全平' : `${(details.closeRatio * 100).toFixed(1)}%`;
+
+      let content = `${statusEmoji[status]} **盈利平仓通知**
+
+${directionEmoji} **操作**: ${actionText[details.action] || details.action}
+📊 **交易对**: ${details.symbol}
+📦 **平仓比例**: ${closeRatioText}
+🔢 **TV信号ID**: ${tvId}
+👤 **账户**: ${accountName}
+⏰ **时间**: ${new Date().toLocaleString('zh-CN')}`;
+
+      if (status === 'START') {
+        content += `\n📋 **状态**: 开始执行盈利平仓操作`;
+      } else if (status === 'SUCCESS') {
+        content += `\n📋 **状态**: 盈利平仓操作成功完成`;
+        if (details.result?.executedQuantity) {
+          content += `\n📦 **执行数量**: ${details.result.executedQuantity}`;
+        }
+        if (details.result?.closeRatio) {
+          content += `\n📊 **实际平仓比例**: ${(details.result.closeRatio * 100).toFixed(1)}%`;
+        }
+        if (details.result?.message) {
+          content += `\n💬 **详情**: ${details.result.message}`;
+        }
+      } else if (status === 'FAILED') {
+        content += `\n📋 **状态**: 盈利平仓操作失败`;
+        if (details.result?.message) {
+          content += `\n❗ **错误**: ${details.result.message}`;
         }
       }
 
-      // 发送错误通知到企业微信
-      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      // 发送Markdown格式的通知
+      await wechatNotification.sendCustomMessage(content, false, accountName);
 
-      await this.sendOrderNotification(params.accountName, {
-        instrumentName,
-        direction: params.direction,
-        quantity: params.quantity,
-        price: params.price || 0,
-        orderId: 'N/A',
-        orderState: 'error',
-        filledAmount: 0,
-        averagePrice: 0,
-        success: false,
-        extraMsg: `错误: ${errorMsg}`
+      console.log(`📱 Profit close notification sent to WeChat for account: ${accountName}, status: ${status}`);
+
+    } catch (error) {
+      console.error('❌ Failed to send profit close notification to WeChat:', error);
+      // 通知发送失败不应该影响主要的交易流程，所以这里只记录错误
+    }
+  }
+
+  /**
+   * 执行止损逻辑
+   * @param accountName 账户名称
+   * @param tvId TV信号ID
+   * @param stopRatio 止损比例 (0.5 = 50%)
+   * @param useMockMode 是否使用模拟模式
+   */
+  private async executeStopLossLogic(
+    accountName: string,
+    tvId: number,
+    stopRatio: number,
+    useMockMode: boolean
+  ): Promise<any> {
+    try {
+      console.log(`🛑 [Stop Loss] Starting stop loss execution for tv_id=${tvId}, ratio=${stopRatio}`);
+
+      // 1. 查询数据库中对应tv_id的所有仓位记录
+      const deltaRecords = this.deltaManager.getRecords({
+        account_id: accountName,
+        tv_id: tvId
       });
+
+      if (deltaRecords.length === 0) {
+        console.log(`⚠️ No delta records found for tv_id: ${tvId}`);
+        return {
+          success: false,
+          message: `No delta records found for tv_id: ${tvId}`
+        };
+      }
+
+      console.log(`📊 Found ${deltaRecords.length} delta record(s) for tv_id: ${tvId}`);
+
+      // 2. 获取访问令牌
+      if (!useMockMode) {
+        await this.deribitAuth.authenticate(accountName);
+      }
+      const tokenInfo = this.deribitAuth.getTokenInfo(accountName);
+      if (!tokenInfo && !useMockMode) {
+        return {
+          success: false,
+          message: `Failed to get access token for account: ${accountName}`
+        };
+      }
+
+      // 3. 获取当前仓位信息
+      const positions = useMockMode
+        ? [] // 模拟模式下暂时返回空数组，实际应该从模拟数据中获取
+        : await this.deribitClient.getPositions(tokenInfo!.accessToken, { kind: 'option' });
+
+      // 4. 对每个Delta记录执行止损操作
+      const stopResults = [];
+      for (const deltaRecord of deltaRecords) {
+        const currentPosition = positions.find(pos =>
+          pos.instrument_name === deltaRecord.instrument_name && pos.size !== 0
+        );
+
+        if (currentPosition) {
+          console.log(`🛑 Executing stop loss for instrument: ${deltaRecord.instrument_name}`);
+
+          const stopResult = await this.executePositionStopLoss(
+            currentPosition,
+            stopRatio,
+            useMockMode,
+            accountName
+          );
+
+          stopResults.push(stopResult);
+        } else {
+          console.log(`⚠️ No active position found for instrument: ${deltaRecord.instrument_name}`);
+          stopResults.push({
+            success: false,
+            message: `No active position found for instrument: ${deltaRecord.instrument_name}`
+          });
+        }
+      }
+
+      // 5. 汇总结果
+      const successCount = stopResults.filter(r => r.success).length;
+      const totalCount = stopResults.length;
 
       return {
+        success: successCount > 0,
+        message: `Stop loss completed: ${successCount}/${totalCount} successful`,
+        orderId: `stop_loss_${tvId}`,
+        executedQuantity: successCount,
+        stopRatio: stopRatio,
+        results: stopResults
+      };
+
+    } catch (error) {
+      console.error(`❌ Stop loss failed for tv_id ${tvId}:`, error);
+      return {
         success: false,
-        message: 'Failed to place option order',
-        error: error instanceof Error ? error.message : 'Unknown error'
+        message: `Stop loss failed: ${error instanceof Error ? error.message : 'Unknown error'}`
       };
     }
   }
 
   /**
-   * 处理非立即成交的订单，将其记录到delta数据库
+   * 执行单个仓位的止损操作
+   * @param position 当前仓位
+   * @param stopRatio 止损比例
+   * @param useMockMode 是否使用模拟模式
+   * @param accountName 账户名称
    */
-  private async handleNonImmediateOrder(
-    orderResult: any,
-    params: OptionTradingParams,
-    instrumentName: string,
-    quantity: number,
-    price: number
-  ): Promise<void> {
+  private async executePositionStopLoss(
+    position: any,
+    stopRatio: number,
+    useMockMode: boolean,
+    accountName: string
+  ): Promise<any> {
     try {
-      console.log(`🔍 handleNonImmediateOrder called with delta1: ${params.delta1}, delta2: ${params.delta2}, tv_id: ${params.tv_id}`);
+      console.log(`🛑 [Stop Loss] Processing position: ${position.instrument_name}, size: ${position.size}`);
 
-      // 检查是否为开仓订单且有delta1或delta2参数
-      const isOpeningOrder = ['open', 'open_long', 'open_short'].includes(params.action);
-      const hasDelta1 = params.delta1 !== undefined;
-      const hasDelta2 = params.delta2 !== undefined;
-      const orderState = orderResult.order?.order_state;
+      // 1. 计算止损数量
+      const totalSize = Math.abs(position.size);
+      const stopQuantity = totalSize * stopRatio;
+      const stopDirection = position.direction === 'buy' ? 'sell' : 'buy';
 
-      console.log(`📊 Order checks: opening=${isOpeningOrder}, hasDelta1=${hasDelta1}, hasDelta2=${hasDelta2}, orderState=${orderState}`);
+      console.log(`🛑 [Stop Loss] Stop quantity: ${stopQuantity} (${(stopRatio * 100).toFixed(1)}% of ${totalSize})`);
 
-      // 如果是开仓订单且有delta1或delta2参数，则记录到数据库
-      // 无论订单是否立即成交，都要记录Delta值
-      if (isOpeningOrder && (hasDelta1 || hasDelta2)) {
-        console.log(`📝 Recording opening order to delta database (state: ${orderState})`);
+      // 2. 获取期权价格信息
+      const optionDetails = useMockMode
+        ? await this.mockClient.getOptionDetails(position.instrument_name)
+        : await this.deribitClient.getOptionDetails(position.instrument_name);
 
-        // 创建delta记录
-        // 如果订单立即成交，记录为仓位；否则记录为订单
-        const recordType = orderState === 'filled' ? DeltaRecordType.POSITION : DeltaRecordType.ORDER;
-        const deltaRecord = {
-          account_id: params.accountName,
-          instrument_name: instrumentName,
-          target_delta: params.delta2 || 0, // delta2记录到target_delta字段，如果没有则默认为0
-          move_position_delta: params.delta1 || 0, // delta1记录到move_position_delta字段，如果没有则默认为0
-          min_expire_days: params.n || null, // 使用n参数作为最小到期天数，如果没有则为null
-          order_id: recordType === DeltaRecordType.ORDER ? (orderResult.order?.order_id || '') : null,
-          tv_id: params.tv_id || null, // 从webhook payload中获取TradingView信号ID
-          record_type: recordType
-        };
-
-        this.deltaManager.createRecord(deltaRecord);
-        console.log(`✅ Delta record created as ${recordType} for ${orderResult.order?.order_id} with delta1=${params.delta1} (move_position_delta), delta2=${params.delta2} (target_delta), tv_id=${params.tv_id}`);
+      if (!optionDetails) {
+        throw new Error(`Failed to get option details for ${position.instrument_name}`);
       }
+
+      // 3. 计算初始价格：(bid_price + ask_price) / 2
+      const initialPrice = (optionDetails.best_bid_price + optionDetails.best_ask_price) / 2;
+      console.log(`🛑 [Stop Loss] Initial price: ${initialPrice} (bid: ${optionDetails.best_bid_price}, ask: ${optionDetails.best_ask_price})`);
+
+      // 4. 获取工具详情用于价格修正
+      const instrumentInfo = useMockMode
+        ? await this.mockClient.getInstrument(position.instrument_name)
+        : await this.deribitClient.getInstrument(position.instrument_name);
+
+      if (!instrumentInfo) {
+        throw new Error(`Failed to get instrument details for ${position.instrument_name}`);
+      }
+
+      // 5. 修正价格和数量
+      const { correctOrderAmount, correctOrderPrice } = await import('../utils/price-correction');
+      const amountResult = correctOrderAmount(stopQuantity, instrumentInfo);
+      const priceResult = correctOrderPrice(initialPrice, instrumentInfo);
+
+      const finalQuantity = amountResult.correctedAmount;
+      const finalPrice = priceResult.correctedPrice;
+
+      console.log(`🛑 [Stop Loss] Corrected params: quantity ${stopQuantity} → ${finalQuantity}, price ${initialPrice} → ${finalPrice}`);
+
+      // 6. 获取访问令牌并下单
+      let accessToken: string | undefined;
+      if (!useMockMode) {
+        const tokenInfo = this.deribitAuth.getTokenInfo(accountName);
+        if (!tokenInfo) {
+          throw new Error(`Failed to get access token for account: ${accountName}`);
+        }
+        accessToken = tokenInfo.accessToken;
+      }
+
+      const orderResult = useMockMode
+        ? await this.mockClient.placeOrder({
+            instrument_name: position.instrument_name,
+            amount: finalQuantity,
+            type: 'limit',
+            direction: stopDirection,
+            price: finalPrice
+          })
+        : await this.deribitClient.placeOrder(
+            position.instrument_name,
+            stopDirection,
+            finalQuantity,
+            'limit',
+            finalPrice,
+            accessToken!
+          );
+
+      if (!orderResult) {
+        throw new Error('Failed to place stop loss order');
+      }
+
+      console.log(`🛑 [Stop Loss] Order placed: ${orderResult.order?.order_id || 'mock_order'}`);
+
+      // 7. 使用渐进式限价策略
+      if (!useMockMode && orderResult.order?.order_id) {
+        console.log(`🎯 [Stop Loss] Starting progressive limit strategy for order ${orderResult.order.order_id}`);
+
+        const { executeProgressiveLimitStrategy } = await import('./progressive-limit-strategy');
+        const strategyResult = await executeProgressiveLimitStrategy(
+          {
+            orderId: orderResult.order.order_id,
+            instrumentName: position.instrument_name,
+            direction: stopDirection,
+            quantity: finalQuantity,
+            initialPrice: finalPrice,
+            accountName: accountName,
+            instrumentDetail: instrumentInfo,
+            timeout: 8000,
+            maxStep: 3
+          },
+          {
+            deribitAuth: this.deribitAuth,
+            deribitClient: this.deribitClient
+          }
+        );
+
+        console.log(`🏁 [Stop Loss] Progressive strategy completed: ${strategyResult.success ? 'success' : 'failed'}`);
+      }
+
+      return {
+        success: true,
+        orderId: orderResult.order?.order_id || 'mock_order',
+        message: `Stop loss executed successfully for ${position.instrument_name}`,
+        instrumentName: position.instrument_name,
+        executedQuantity: finalQuantity,
+        executedPrice: finalPrice,
+        stopRatio: stopRatio
+      };
+
     } catch (error) {
-      console.error('❌ Failed to handle non-immediate order:', error);
-      // 不抛出错误，避免影响主要的交易流程
+      console.error(`❌ Stop loss failed for position ${position.instrument_name}:`, error);
+      return {
+        success: false,
+        message: `Stop loss failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        instrumentName: position.instrument_name
+      };
     }
   }
 
   /**
-   * 将仓位信息记录到delta数据库中
-   * 如果已存在合约信息，则更新；否则新增记录
+   * 发送止损通知到企业微信
+   * @param accountName 账户名称
+   * @param tvId TV信号ID
+   * @param status 状态：START, SUCCESS, FAILED
+   * @param details 详细信息
    */
-  private async recordPositionInfoToDatabase(
-    strategyResult: {
-      success: boolean;
-      finalOrderState?: string;
-      executedQuantity?: number;
-      averagePrice?: number;
-      positionInfo?: DetailedPositionInfo;
-      message: string;
-    },
-    params: OptionTradingParams
+  private async sendStopLossNotification(
+    accountName: string,
+    tvId: number,
+    status: 'START' | 'SUCCESS' | 'FAILED',
+    details: {
+      symbol: string;
+      action: OptionTradingAction;
+      direction: 'buy' | 'sell';
+      result?: any;
+    }
   ): Promise<void> {
     try {
-      if (!strategyResult.success || !strategyResult.positionInfo) {
-        console.log(`ℹ️ 跳过数据库记录：策略未成功或无仓位信息`);
+      // 检查企业微信通知服务是否可用
+      if (!wechatNotification.isAvailable()) {
+        console.log('📱 WeChat notification not available, skipping stop loss notification');
         return;
       }
 
-      const posInfo = strategyResult.positionInfo;
-      const executionStats = posInfo.executionStats;
-
-      // 检查是否有实际成交
-      if (!executionStats.executedQuantity || executionStats.executedQuantity <= 0) {
-        console.log(`ℹ️ 跳过数据库记录：无实际成交 (executedQuantity: ${executionStats.executedQuantity})`);
-        return;
-      }
-
-      // 从仓位信息中提取Delta值
-      let targetDelta = 0;
-      let movePositionDelta = 0;
-
-      // 优先使用原始参数中的delta值
-      if (params.delta2 !== undefined) {
-        targetDelta = params.delta2;
-      }
-      if (params.delta1 !== undefined) {
-        movePositionDelta = params.delta1;
-      }
-
-      // 如果原始参数没有delta值，尝试从仓位信息中获取
-      if (targetDelta === 0 && posInfo.positions.length > 0) {
-        // 计算净Delta值作为target_delta
-        targetDelta = posInfo.summary.netDelta || 0;
-      }
-
-      // 创建或更新delta记录
-      const deltaRecord = {
-        account_id: posInfo.metadata.accountName,
-        instrument_name: executionStats.instrumentName,
-        target_delta: Math.max(-1, Math.min(1, targetDelta)), // 确保在[-1, 1]范围内
-        move_position_delta: Math.max(-1, Math.min(1, movePositionDelta)), // 确保在[-1, 1]范围内
-        min_expire_days: params.n || null, // 使用n参数作为最小到期天数，如果没有则为null
-        tv_id: params.tv_id || null, // 从webhook payload中获取TradingView信号ID
-        record_type: DeltaRecordType.POSITION // 策略完成后记录为仓位
+      const statusEmoji = {
+        START: '🛑',
+        SUCCESS: '✅',
+        FAILED: '❌'
       };
 
-      // 使用upsert操作：如果存在则更新，否则创建
-      const record = this.deltaManager.upsertRecord(deltaRecord);
+      const actionText: Record<OptionTradingAction, string> = {
+        open_long: '开多仓',
+        open_short: '开空仓',
+        close_long: '平多仓',
+        close_short: '平空仓',
+        reduce_long: '减多仓',
+        reduce_short: '减空仓',
+        stop_long: '止损多仓',
+        stop_short: '止损空仓'
+      };
 
-      console.log(`✅ 仓位信息已记录到delta数据库:`, {
-        id: record.id,
-        account_id: record.account_id,
-        instrument_name: record.instrument_name,
-        target_delta: record.target_delta,
-        move_position_delta: record.move_position_delta,
-        tv_id: record.tv_id,
-        executed_quantity: executionStats.executedQuantity,
-        average_price: executionStats.averagePrice
-      });
+      const directionEmoji = details.direction === 'buy' ? '📈' : '📉';
+
+      let content = `${statusEmoji[status]} **止损通知**
+
+${directionEmoji} **操作**: ${actionText[details.action] || details.action}
+📊 **交易对**: ${details.symbol}
+📦 **止损比例**: 50%
+🔢 **TV信号ID**: ${tvId}
+👤 **账户**: ${accountName}
+⏰ **时间**: ${new Date().toLocaleString('zh-CN')}`;
+
+      if (status === 'START') {
+        content += `\n📋 **状态**: 开始执行止损操作`;
+      } else if (status === 'SUCCESS') {
+        content += `\n📋 **状态**: 止损操作成功完成`;
+        if (details.result?.executedQuantity) {
+          content += `\n📦 **执行数量**: ${details.result.executedQuantity}`;
+        }
+        if (details.result?.message) {
+          content += `\n💬 **详情**: ${details.result.message}`;
+        }
+      } else if (status === 'FAILED') {
+        content += `\n📋 **状态**: 止损操作失败`;
+        if (details.result?.message) {
+          content += `\n❗ **错误**: ${details.result.message}`;
+        }
+      }
+
+      // 发送Markdown格式的通知
+      await wechatNotification.sendCustomMessage(content, false, accountName);
+
+      console.log(`📱 Stop loss notification sent to WeChat for account: ${accountName}, status: ${status}`);
 
     } catch (error) {
-      console.error(`❌ 记录仓位信息到数据库失败:`, error);
-      // 不抛出错误，避免影响主要的交易流程
+      console.error('❌ Failed to send stop loss notification to WeChat:', error);
+      // 通知发送失败不应该影响主要的交易流程，所以这里只记录错误
     }
   }
+
+
+
+
+
+
 
   /**
    * 获取交易状态
@@ -903,75 +1073,7 @@ export class OptionTradingService {
     };
   }
 
-  /**
-   * 发送订单通知到企业微信
-   */
-  private async sendOrderNotification(accountName: string, orderInfo: {
-    instrumentName: string;
-    direction: string;
-    quantity: number;
-    price: number;
-    orderId: string;
-    orderState: string;
-    filledAmount: number;
-    averagePrice: number;
-    success: boolean;
-    extraMsg?: string;
-  }): Promise<void> {
-    try {
-      const account = this.configLoader.getAccountByName(accountName);
-      if (!account) {
-        console.warn(`⚠️ Account ${accountName} not found, skipping WeChat notification`);
-        return;
-      }
 
-      const bot = this.configLoader.getAccountWeChatBot(accountName);
-      if (!bot) {
-        console.log(`📱 No WeChat bot configured for account ${accountName}, skipping notification`);
-        return;
-      }
-
-      // 构建通知内容
-      const statusIcon = orderInfo.success ? '✅' : '❌';
-      const statusText = orderInfo.success ? '成功' : '失败';
-      const directionText = orderInfo.direction === 'buy' ? '买入' : '卖出';
-      const orderStateText = this.getOrderStateText(orderInfo.orderState);
-
-      const notificationContent = `${statusIcon} **期权交易${statusText}**
-
-👤 账户: ${accountName}
-🎯 合约: ${orderInfo.instrumentName}
-📊 操作: ${directionText} ${orderInfo.quantity} 张
-💰 价格: $${orderInfo.price.toFixed(4)}
-🆔 订单ID: ${orderInfo.orderId}
-📈 状态: ${orderStateText}
-${orderInfo.extraMsg ? `ℹ️ ${orderInfo.extraMsg}` : ''}
-${orderInfo.filledAmount > 0 ? `✅ 成交数量: ${orderInfo.filledAmount} 张` : ''}
-${orderInfo.averagePrice > 0 ? `💵 成交均价: $${orderInfo.averagePrice.toFixed(4)}` : ''}
-⏰ 时间: ${new Date().toLocaleString('zh-CN')}`;
-
-      await bot.sendMarkdown(notificationContent);
-      console.log(`📱 Order notification sent to WeChat for account: ${accountName}`);
-    } catch (error) {
-      console.error(`❌ Failed to send order notification for account ${accountName}:`, error);
-    }
-  }
-
-  /**
-   * 获取订单状态的中文描述
-   */
-  private getOrderStateText(orderState: string): string {
-    const stateMap: { [key: string]: string } = {
-      'open': '未成交',
-      'filled': '已成交',
-      'rejected': '已拒绝',
-      'cancelled': '已取消',
-      'untriggered': '未触发',
-      'triggered': '已触发',
-      'unknown': '未知状态'
-    };
-    return stateMap[orderState] || orderState;
-  }
 
   // executeProgressiveLimitStrategy函数已迁移到 src/services/progressive-limit-strategy.ts
 

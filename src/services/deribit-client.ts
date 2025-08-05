@@ -417,7 +417,7 @@ export class DeribitClient {
         return await this.privateAPI.sell(orderParams);
       }
     } catch (error) {
-      console.error('Error placing order:', error);
+      // console.error('Error placing order:', error);
       throw error;
     }
   }

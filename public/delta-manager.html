@@ -483,6 +483,7 @@
                                 <tr>
                                     <th>状态</th>
                                     <th>合约名称</th>
+                                    <th>数量</th>
                                     <th>目标Delta</th>
                                     <th>移仓Delta</th>
                                     <th>最小到期天数</th>
@@ -1117,9 +1118,14 @@
                     }
                 }
 
+                // 查找对应的实际仓位数据以获取数量信息
+                const matchingPosition = livePositions.find(pos => pos.instrument_name === record.instrument_name);
+                const quantity = matchingPosition ? (matchingPosition.size || matchingPosition.amount || 0) : '-';
+
                 row.innerHTML = `
                     <td>${statusHtml}</td>
                     <td>${record.instrument_name}</td>
+                    <td>${quantity}</td>
                     <td class="${record.target_delta >= 0 ? 'delta-positive' : 'delta-negative'}">${record.target_delta.toFixed(4)}</td>
                     <td class="${(record.move_position_delta || 0) >= 0 ? 'delta-positive' : 'delta-negative'}">${(record.move_position_delta || 0).toFixed(4)}</td>
                     <td>${record.min_expire_days || '-'}</td>
@@ -1138,7 +1144,7 @@
 
             if (positionRecords.length === 0) {
                 const row = document.createElement('tr');
-                row.innerHTML = '<td colspan="9" style="text-align: center; color: #7f8c8d;">暂无仓位记录</td>';
+                row.innerHTML = '<td colspan="11" style="text-align: center; color: #7f8c8d;">暂无仓位记录</td>';
                 tbody.appendChild(row);
             }
         }

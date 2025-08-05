@@ -83,7 +83,6 @@ export interface WebhookSignalPayload {
   delta1?: number;                       // 期权Delta值，用于开仓时选择期权，同时记录到move_position_delta字段
   n?: number;                           // 最小到期天数，用于开仓时选择期权，同时记录到min_expire_days字段
   delta2?: number;                       // 目标Delta值，用于将非立即成交的开仓订单记录到delta数据库
-  seller?: boolean;                       // 期权卖方
 }
 
 // Webhook响应接口
@@ -123,7 +122,17 @@ export interface OptionTradingParams {
   n?: number;                           // 最小到期天数，用于开仓时选择期权
   tv_id?: number;                       // TradingView信号ID，用于记录到delta数据库
   closeRatio?: number;                  // 平仓比例 (0-1, 1表示全平)
-  seller?: boolean;                       // 是否是期权卖方
+}
+
+// 精简的期权下单参数接口 - 只包含placeOptionOrder必需的参数
+export interface PlaceOptionOrderParams {
+  accountName: string;                   // 账户名称 (必需)
+  direction: 'buy' | 'sell';             // 交易方向 (必需)
+  quantity: number;                      // 交易数量 (必需)
+  action: OptionTradingAction;           // 交易动作 (必需，用于通知)
+  price?: number;                        // 限价 (可选，不提供则使用智能定价)
+  qtyType?: 'fixed' | 'cash';           // 数量类型 (可选，默认fixed)
+  delta2?: number;                       // 目标Delta值 (可选，用于记录到delta数据库)
 }
 
 // 期权交易结果接口
@@ -145,7 +154,7 @@ export interface DeribitPosition {
   instrument_name: string;           // 工具名称
   size: number;                      // 仓位大小（正数为多头，负数为空头）
   size_currency?: number;            // 以货币计价的仓位大小
-  direction: 'buy' | 'sell' | 'zero'; // 仓位方向
+  direction: 'buy' | 'sell'; // 仓位方向
   average_price: number;             // 平均开仓价格
   average_price_usd?: number;        // 以USD计价的平均开仓价格
   mark_price: number;                // 标记价格

@@ -6,10 +6,13 @@
 import { ConfigLoader } from '../config';
 import { DeltaManager } from '../database/delta-manager';
 import { DeltaRecord } from '../database/types';
-import { DeribitPosition } from '../types';
+import { DeribitPosition, OptionTradingParams } from '../types';
 import { correctOrderAmount, correctSmartPrice } from '../utils/price-correction';
 import { DeribitAuth } from './auth';
 import { DeribitClient } from './deribit-client';
+import { MockDeribitClient } from './mock-deribit';
+import { OrderSupportDependencies } from './order-support-functions';
+import { placeOptionOrder, PlaceOrderDependencies } from './place-option-order';
 import { executeProgressiveLimitStrategy } from './progressive-limit-strategy';
 
 
@@ -30,10 +33,12 @@ export async function executePositionAdjustment(
     deribitClient: DeribitClient;
     deltaManager: DeltaManager;
     deribitAuth: DeribitAuth;
+    mockClient: MockDeribitClient;
+    configLoader: ConfigLoader;
   }
 ) {
   const { requestId, accountName, currentPosition, deltaRecord, accessToken } = params;
-  const { deribitClient, deltaManager, deribitAuth } = services;
+  const { deribitClient, deltaManager, deribitAuth, mockClient, configLoader } = services;
 
   try {
     console.log(`🔄 [${requestId}] Starting position adjustment for ${currentPosition.instrument_name}`);
@@ -45,14 +50,14 @@ export async function executePositionAdjustment(
     console.log(`📊 [${requestId}] Getting instrument by delta: currency=${currency}, delta=${deltaRecord.move_position_delta}`);
 
     // 确定方向：如果move_position_delta为正，选择看涨期权；为负，选择看跌期权
-    const longSide = deltaRecord.move_position_delta > 0;
+    const isCall = deltaRecord.move_position_delta > 0;
 
     // 获取新的期权工具
     const deltaResult = await deribitClient.getInstrumentByDelta(
       currency,
       deltaRecord.min_expire_days || 7, // 最小到期天数，默认7天
       Math.abs(deltaRecord.move_position_delta), // 目标delta值
-      longSide
+      isCall
     );
 
     if (!deltaResult || !deltaResult.instrument) {
@@ -87,32 +92,75 @@ export async function executePositionAdjustment(
     console.log(`🗑️ [${requestId}] Delta record deletion: ${deleteSuccess ? 'success' : 'failed'} (ID: ${deltaRecord.id})`);
 
     // 4. 开新仓位
-    const newDirection = deltaRecord.move_position_delta > 0 ? 'buy' : 'sell';
+    const newDirection = currentPosition.direction;//deltaRecord.move_position_delta > 0 ? 'buy' : 'sell';
     const newQuantity = Math.abs(currentPosition.size);
-
+    const instrumentName = deltaResult.instrument.instrument_name
     console.log(`📈 [${requestId}] Opening new position: ${newDirection} ${newQuantity} contracts of ${deltaResult.instrument.instrument_name}`);
 
-    const newOrderResult = await deribitClient.placeOrder(
-      deltaResult.instrument.instrument_name,
-      newDirection,
-      newQuantity,
-      'limit',
-      0.05, // 使用默认限价
-      accessToken
-    );
-
-    if (!newOrderResult) {
-      console.error(`❌ [${requestId}] Failed to open new position, but old position was closed`);
-      throw new Error(`Failed to open new position: No response received`);
+    const optionDetails = await deribitClient.getOptionDetails(instrumentName);
+    if (!optionDetails) {
+      throw new Error(`Failed to get option details for ${instrumentName}`);
     }
 
-    console.log(`✅ [${requestId}] New position opened successfully: ${newOrderResult.order.order_id}`);
+    // 使用 placeOptionOrder 替换基础的 placeOrder，提供更好的订单执行
+    console.log(`🎯 [${requestId}] Using placeOptionOrder for better execution`);
+
+    // 构建 OptionTradingParams
+    const tradingParams: OptionTradingParams = {
+      accountName: accountName,
+      direction: newDirection,
+      action: newDirection === 'buy' ? 'open_long' : 'open_short', // 根据方向确定开仓动作
+      symbol: currency, // 使用货币符号
+      quantity: newQuantity,
+      orderType: 'limit',
+      instrumentName: deltaResult.instrument.instrument_name,
+      delta1: deltaRecord.move_position_delta, // 使用目标delta值
+      delta2: deltaRecord.target_delta, // 使用目标delta值
+      n: deltaRecord.min_expire_days || undefined, // 使用最小到期天数
+      tv_id: deltaRecord.tv_id || undefined // 传递TV信号ID，处理null值
+    };
+
+    // 构建依赖注入对象
+    const orderSupportDependencies: OrderSupportDependencies = {
+      deltaManager: deltaManager,
+      configLoader: configLoader
+    };
+
+    const dependencies: PlaceOrderDependencies = {
+      deribitAuth: deribitAuth,
+      deribitClient: deribitClient,
+      mockClient: mockClient,
+      configLoader: configLoader,
+      orderSupportDependencies: orderSupportDependencies
+    };
+
+    // 调用 placeOptionOrder 进行智能下单
+    const newOrderResult = await placeOptionOrder(
+      deltaResult.instrument.instrument_name,
+      tradingParams,
+      false, // 不使用模拟模式
+      dependencies
+    );
+
+    if (!newOrderResult || !newOrderResult.success) {
+      console.error(`❌ [${requestId}] Failed to open new position, but old position was closed`);
+      throw new Error(`Failed to open new position: ${newOrderResult?.message || 'No response received'}`);
+    }
+
+    console.log(`✅ [${requestId}] New position opened successfully: ${newOrderResult.orderId}`);
 
     // 返回成功结果
     return {
       success: true,
       closeResult: closeResult,
-      newOrderResult: newOrderResult,
+      newOrderResult: {
+        success: newOrderResult.success,
+        orderId: newOrderResult.orderId,
+        message: newOrderResult.message,
+        instrumentName: newOrderResult.instrumentName,
+        executedQuantity: newOrderResult.executedQuantity,
+        executedPrice: newOrderResult.executedPrice
+      },
       deltaRecordDeleted: deleteSuccess,
       oldInstrument: currentPosition.instrument_name,
       newInstrument: deltaResult.instrument.instrument_name,
@@ -147,7 +195,7 @@ export async function executePositionCloseByTvId(
   accountName: string,
   tvId: number,
   closeRatio: number,
-  isMarketOrder: boolean, 
+  isMarketOrder: boolean,
   services: {
     configLoader: ConfigLoader;
     deltaManager: DeltaManager;
@@ -446,9 +494,10 @@ export async function executePositionAdjustmentByTvId(
     deltaManager: DeltaManager;
     deribitAuth: DeribitAuth;
     deribitClient: DeribitClient;
+    mockClient: MockDeribitClient;
   }
 ) {
-  const { configLoader, deltaManager, deribitAuth, deribitClient } = services;
+  const { configLoader, deltaManager, deribitAuth, deribitClient, mockClient } = services;
 
   try {
     console.log(`🔍 Executing position adjustment for account: ${accountName}, tv_id: ${tvId}`);
@@ -520,7 +569,9 @@ export async function executePositionAdjustmentByTvId(
           {
             deribitClient,
             deltaManager,
-            deribitAuth
+            deribitAuth,
+            mockClient: mockClient,
+            configLoader: configLoader
           }
         );
 

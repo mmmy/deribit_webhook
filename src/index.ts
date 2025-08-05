@@ -1249,7 +1249,9 @@ async function pollAllAccountsPositions() {
                       {
                         deribitClient,
                         deltaManager,
-                        deribitAuth
+                        deribitAuth,
+                        mockClient: new MockDeribitClient(),
+                        configLoader
                       }
                     );
 

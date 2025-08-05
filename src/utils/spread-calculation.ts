@@ -20,7 +20,7 @@
 export function calculateSpreadRatio(bidPrice: number, askPrice: number): number {
   // 验证价格有效性
   if (!bidPrice || !askPrice || bidPrice <= 0 || askPrice <= 0) {
-    console.warn(`⚠️ Invalid bid/ask prices: bid=${bidPrice}, ask=${askPrice}`);
+    // console.warn(`⚠️ Invalid bid/ask prices: bid=${bidPrice}, ask=${askPrice}`);
     return 1; // 返回最大价差比率，表示流动性极差
   }
   

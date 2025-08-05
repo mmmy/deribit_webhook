@@ -14,6 +14,7 @@ import { DeribitAuth } from './auth';
 import { DeribitClient } from './deribit-client';
 import { MockDeribitClient } from './mock-deribit';
 import { executePositionAdjustmentByTvId, executePositionCloseByTvId } from './position-adjustment';
+import { WeChatNotificationService } from './wechat-notification';
 
 export class OptionTradingService {
   private deribitAuth: DeribitAuth;
@@ -21,6 +22,7 @@ export class OptionTradingService {
   private deribitClient: DeribitClient;
   private mockClient: MockDeribitClient;
   private deltaManager: DeltaManager;
+  private wechatNotification: WeChatNotificationService;
 
   constructor() {
     this.deribitAuth = new DeribitAuth();
@@ -28,6 +30,7 @@ export class OptionTradingService {
     this.deribitClient = new DeribitClient();
     this.mockClient = new MockDeribitClient();
     this.deltaManager = new DeltaManager();
+    this.wechatNotification = new WeChatNotificationService();
   }
 
   /**
@@ -593,7 +596,23 @@ export class OptionTradingService {
   
           // 检查是否为非立即成交的开仓订单，如果是则记录到delta数据库
           await this.handleNonImmediateOrder(orderResult, params, instrumentName, finalQuantity, finalPrice);
-  
+
+          // 发送通知到企业微信
+          const spreadPercentage = (spreadRatio * 100).toFixed(1);
+          const extraMsg = `盘口价差过大: ${spreadPercentage}%`;
+
+          await this.sendOrderNotification(params.accountName, {
+            instrumentName,
+            direction: orderResult.order?.direction,
+            quantity: finalQuantity,
+            price: finalPrice,
+            orderId: orderResult.order?.order_id || `deribit_${Date.now()}`,
+            orderState: orderResult.order?.order_state || 'unknown',
+            filledAmount: orderResult.order?.filled_amount || 0,
+            averagePrice: orderResult.order?.average_price || 0,
+            success: true,
+            extraMsg: extraMsg
+          });
           return {
             success: true,
             orderId: orderResult.order?.order_id || `deribit_${Date.now()}`,
@@ -647,6 +666,24 @@ export class OptionTradingService {
             console.log(`✅ Progressive strategy completed successfully:`, strategyResult);
             // 将返回的仓位信息记录到delta数据库中
             await this.recordPositionInfoToDatabase(strategyResult, params);
+
+            // 发送成功通知到企业微信
+            const spreadPercentage = (spreadRatio * 100).toFixed(1);
+            const extraMsg = `盘口价差: ${spreadPercentage}% (渐进式策略)`;
+
+            await this.sendOrderNotification(params.accountName, {
+              instrumentName,
+              direction: params.direction,
+              quantity: finalQuantity,
+              price: strategyResult.averagePrice || finalPrice,
+              orderId: orderResult.order.order_id,
+              orderState: strategyResult.finalOrderState || 'filled',
+              filledAmount: strategyResult.executedQuantity || finalQuantity,
+              averagePrice: strategyResult.averagePrice || finalPrice,
+              success: true,
+              extraMsg: extraMsg
+            });
+
             return {
               success: true,
               orderId: orderResult.order.order_id,
@@ -659,6 +696,23 @@ export class OptionTradingService {
             };
           } else {
             console.error(`❌ Progressive strategy failed:`, strategyResult.message);
+
+            // 发送失败通知到企业微信
+            const spreadPercentage = (spreadRatio * 100).toFixed(1);
+            const extraMsg = `盘口价差: ${spreadPercentage}% (渐进式策略失败)`;
+
+            await this.sendOrderNotification(params.accountName, {
+              instrumentName,
+              direction: params.direction,
+              quantity: finalQuantity,
+              price: finalPrice,
+              orderId: orderResult.order.order_id,
+              orderState: 'failed',
+              filledAmount: 0,
+              averagePrice: 0,
+              success: false,
+              extraMsg: extraMsg
+            });
 
             return {
               success: false,
@@ -684,6 +738,22 @@ export class OptionTradingService {
           console.error(`Response data:`, JSON.stringify((error as any).response.data, null, 2));
         }
       }
+
+      // 发送错误通知到企业微信
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+
+      await this.sendOrderNotification(params.accountName, {
+        instrumentName,
+        direction: params.direction,
+        quantity: params.quantity,
+        price: params.price || 0,
+        orderId: 'N/A',
+        orderState: 'error',
+        filledAmount: 0,
+        averagePrice: 0,
+        success: false,
+        extraMsg: `错误: ${errorMsg}`
+      });
 
       return {
         success: false,
@@ -831,6 +901,76 @@ export class OptionTradingService {
       enabledAccounts: this.configLoader.getEnabledAccounts().length,
       timestamp: new Date().toISOString()
     };
+  }
+
+  /**
+   * 发送订单通知到企业微信
+   */
+  private async sendOrderNotification(accountName: string, orderInfo: {
+    instrumentName: string;
+    direction: string;
+    quantity: number;
+    price: number;
+    orderId: string;
+    orderState: string;
+    filledAmount: number;
+    averagePrice: number;
+    success: boolean;
+    extraMsg?: string;
+  }): Promise<void> {
+    try {
+      const account = this.configLoader.getAccountByName(accountName);
+      if (!account) {
+        console.warn(`⚠️ Account ${accountName} not found, skipping WeChat notification`);
+        return;
+      }
+
+      const bot = this.configLoader.getAccountWeChatBot(accountName);
+      if (!bot) {
+        console.log(`📱 No WeChat bot configured for account ${accountName}, skipping notification`);
+        return;
+      }
+
+      // 构建通知内容
+      const statusIcon = orderInfo.success ? '✅' : '❌';
+      const statusText = orderInfo.success ? '成功' : '失败';
+      const directionText = orderInfo.direction === 'buy' ? '买入' : '卖出';
+      const orderStateText = this.getOrderStateText(orderInfo.orderState);
+
+      const notificationContent = `${statusIcon} **期权交易${statusText}**
+
+👤 账户: ${accountName}
+🎯 合约: ${orderInfo.instrumentName}
+📊 操作: ${directionText} ${orderInfo.quantity} 张
+💰 价格: $${orderInfo.price.toFixed(4)}
+🆔 订单ID: ${orderInfo.orderId}
+📈 状态: ${orderStateText}
+${orderInfo.extraMsg ? `ℹ️ ${orderInfo.extraMsg}` : ''}
+${orderInfo.filledAmount > 0 ? `✅ 成交数量: ${orderInfo.filledAmount} 张` : ''}
+${orderInfo.averagePrice > 0 ? `💵 成交均价: $${orderInfo.averagePrice.toFixed(4)}` : ''}
+⏰ 时间: ${new Date().toLocaleString('zh-CN')}`;
+
+      await bot.sendMarkdown(notificationContent);
+      console.log(`📱 Order notification sent to WeChat for account: ${accountName}`);
+    } catch (error) {
+      console.error(`❌ Failed to send order notification for account ${accountName}:`, error);
+    }
+  }
+
+  /**
+   * 获取订单状态的中文描述
+   */
+  private getOrderStateText(orderState: string): string {
+    const stateMap: { [key: string]: string } = {
+      'open': '未成交',
+      'filled': '已成交',
+      'rejected': '已拒绝',
+      'cancelled': '已取消',
+      'untriggered': '未触发',
+      'triggered': '已触发',
+      'unknown': '未知状态'
+    };
+    return stateMap[orderState] || orderState;
   }
 
   // executeProgressiveLimitStrategy函数已迁移到 src/services/progressive-limit-strategy.ts

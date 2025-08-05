@@ -365,26 +365,136 @@
             background: #2980b9;
         }
 
+        /* 复制警报消息相关样式 */
+        #copyAlertBtn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+        }
+
+        #copyAlertBtn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+            background: linear-gradient(135deg, #5a6fd8 0%, #6a4190 100%);
+        }
+
+        #copyAlertBtn:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 6px rgba(102, 126, 234, 0.3);
+        }
+
+        /* 复制成功提示样式 */
+        .copy-success {
+            background: #27ae60 !important;
+            animation: copySuccess 0.6s ease;
+        }
+
+        @keyframes copySuccess {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+
+        /* 警报消息模态框样式 */
+        .alert-modal {
+            display: none;
+            position: fixed;
+            z-index: 2000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+        }
+
+        .alert-modal-content {
+            background-color: #fefefe;
+            margin: 5% auto;
+            padding: 20px;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+
+        .alert-code-block {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.4;
+            white-space: pre-wrap;
+            word-break: break-all;
+            margin: 15px 0;
+            position: relative;
+        }
+
+        .copy-code-btn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: background 0.3s ease;
+        }
+
+        .copy-code-btn:hover {
+            background: #0056b3;
+        }
+
         @media (max-width: 768px) {
             .container {
                 margin: 10px;
                 border-radius: 10px;
             }
-            
+
             .main-content {
                 padding: 20px;
             }
-            
+
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             table {
                 font-size: 14px;
             }
-            
+
             th, td {
                 padding: 10px 8px;
+            }
+
+            #copyAlertBtn {
+                margin-left: 10px !important;
+                padding: 6px 12px;
+                font-size: 12px;
+            }
+
+            .alert-modal-content {
+                margin: 10% auto;
+                width: 95%;
+                padding: 15px;
+            }
+
+            .alert-code-block {
+                font-size: 11px;
+                padding: 10px;
             }
         }
     </style>
@@ -432,6 +542,10 @@
                 <select id="accountSelect">
                     <option value="">请选择账户...</option>
                 </select>
+
+                <button id="copyAlertBtn" class="btn btn-info" style="margin-left: 20px;" title="复制TradingView警报消息模板">
+                    📋 复制警报消息
+                </button>
             </div>
         </div>
 
@@ -1852,11 +1966,243 @@
             }
         });
 
+        // 警报消息相关函数
+        function generateRandomTvId() {
+            // 生成一个随机的正整数 (1 到 2147483647)
+            return Math.floor(Math.random() * 2147483647) + 1;
+        }
+
+        function generateAlertMessage() {
+            const selectedAccount = document.getElementById('accountSelect').value;
+            if (!selectedAccount) {
+                showError('请先选择一个账户');
+                return null;
+            }
+
+            const tvId = generateRandomTvId();
+
+            // 创建消息模板，使用字符串替换来保持正确的格式
+            const template = `{
+  "accountName": "${selectedAccount}",
+  "symbol": "{{ticker}}",
+  "side": "{{strategy.order.action}}",
+  "size": {{plot("size")}},
+  "price": "{{close}}",
+  "marketPosition": "{{strategy.market_position}}",
+  "prevMarketPosition": "{{strategy.prev_market_position}}",
+  "qtyType": "cash",
+  "delta1": {{plot("delta1")}},
+  "n": {{plot("n")}},
+  "delta2": {{plot("delta2")}},
+  "timestamp": "{{timenow}}",
+  "alertMessage": "{{strategy.order.alert_message}}",
+  "comment": "{{strategy.order.comment}}",
+  "tv_id": ${tvId}
+}`;
+
+            return template;
+        }
+
+        function showAlertModal() {
+            const alertMessage = generateAlertMessage();
+            if (!alertMessage) return;
+
+            document.getElementById('alertMessageContent').textContent = alertMessage;
+
+            // 重置按钮状态
+            resetButtonStates();
+
+            document.getElementById('alertModal').style.display = 'block';
+
+            // 确保模态框显示后再绑定事件（防止按钮还未渲染）
+            setTimeout(() => {
+                bindModalEvents();
+            }, 100);
+        }
+
+        function resetButtonStates() {
+            // 重置所有复制按钮的状态
+            const copyCodeBtn = document.getElementById('copyCodeBtn');
+            if (copyCodeBtn) {
+                copyCodeBtn.textContent = '复制';
+                copyCodeBtn.style.background = '';
+            }
+
+            const copyMainBtn = document.getElementById('copyMainBtn');
+            if (copyMainBtn) {
+                copyMainBtn.textContent = '📋 复制到剪贴板';
+                copyMainBtn.style.background = '#28a745';
+            }
+        }
+
+        function bindModalEvents() {
+            // 绑定代码块中的复制按钮
+            const copyCodeBtn = document.getElementById('copyCodeBtn');
+            if (copyCodeBtn) {
+                copyCodeBtn.onclick = function() {
+                    console.log('Copy code button clicked');
+                    copyAlertMessage();
+                };
+            }
+
+            // 绑定主复制按钮
+            const copyMainBtn = document.getElementById('copyMainBtn');
+            if (copyMainBtn) {
+                copyMainBtn.onclick = function() {
+                    console.log('Copy main button clicked');
+                    copyAlertMessage();
+                };
+            }
+
+            // 绑定关闭按钮
+            const closeModalBtn = document.getElementById('closeModalBtn');
+            if (closeModalBtn) {
+                closeModalBtn.onclick = function() {
+                    console.log('Close modal button clicked');
+                    closeAlertModal();
+                };
+            }
+
+            // 绑定右上角关闭按钮 (×)
+            const closeSpanBtn = document.getElementById('closeSpanBtn');
+            if (closeSpanBtn) {
+                closeSpanBtn.onclick = function() {
+                    console.log('Close span button clicked');
+                    closeAlertModal();
+                };
+            }
+        }
+
+        function closeAlertModal() {
+            document.getElementById('alertModal').style.display = 'none';
+        }
+
+        // 确保函数在全局作用域中可用
+        window.closeAlertModal = closeAlertModal;
+        window.copyAlertMessage = copyAlertMessage;
+
+        async function copyAlertMessage() {
+            console.log('copyAlertMessage function called');
+
+            const alertMessage = generateAlertMessage();
+            if (!alertMessage) {
+                console.error('No alert message generated');
+                return;
+            }
+
+            console.log('Alert message to copy:', alertMessage);
+
+            // 从消息中提取tv_id用于显示
+            const tvIdMatch = alertMessage.match(/"tv_id": (\d+)/);
+            const tvId = tvIdMatch ? tvIdMatch[1] : 'unknown';
+
+            try {
+                await navigator.clipboard.writeText(alertMessage);
+                console.log('Clipboard write successful');
+
+                // 显示复制成功效果
+                const copyCodeBtn = document.getElementById('copyCodeBtn');
+                if (copyCodeBtn) {
+                    copyCodeBtn.textContent = '✅ 已复制';
+                    copyCodeBtn.style.background = '#27ae60';
+
+                    setTimeout(() => {
+                        copyCodeBtn.textContent = '复制';
+                        copyCodeBtn.style.background = '';
+                    }, 2000);
+                }
+
+                const copyMainBtn = document.getElementById('copyMainBtn');
+                if (copyMainBtn) {
+                    copyMainBtn.textContent = '✅ 已复制';
+                    copyMainBtn.style.background = '#27ae60';
+
+                    setTimeout(() => {
+                        copyMainBtn.textContent = '📋 复制到剪贴板';
+                        copyMainBtn.style.background = '#28a745';
+                    }, 2000);
+                }
+
+                showSuccess(`警报消息已复制到剪贴板 (TV_ID: ${tvId})`);
+
+            } catch (err) {
+                console.log('Clipboard API failed, trying fallback method:', err);
+
+                // 备用方案：使用传统的复制方法
+                const textArea = document.createElement('textarea');
+                textArea.value = alertMessage;
+                textArea.style.position = 'fixed';
+                textArea.style.left = '-999999px';
+                textArea.style.top = '-999999px';
+                document.body.appendChild(textArea);
+                textArea.focus();
+                textArea.select();
+
+                try {
+                    const successful = document.execCommand('copy');
+                    if (successful) {
+                        console.log('Fallback copy successful');
+                        showSuccess(`警报消息已复制到剪贴板 (TV_ID: ${tvId})`);
+                    } else {
+                        throw new Error('execCommand failed');
+                    }
+                } catch (fallbackErr) {
+                    console.error('Fallback copy failed:', fallbackErr);
+                    showError('复制失败，请手动复制消息内容');
+                }
+
+                document.body.removeChild(textArea);
+            }
+        }
+
+        // 绑定复制警报消息按钮事件
+        document.addEventListener('DOMContentLoaded', function() {
+            const copyAlertBtn = document.getElementById('copyAlertBtn');
+            if (copyAlertBtn) {
+                copyAlertBtn.addEventListener('click', showAlertModal);
+            }
+
+            // 绑定模态框内的按钮事件
+            const copyCodeBtn = document.getElementById('copyCodeBtn');
+            if (copyCodeBtn) {
+                copyCodeBtn.addEventListener('click', function() {
+                    console.log('Copy code button clicked');
+                    copyAlertMessage();
+                });
+            }
+
+            const copyMainBtn = document.getElementById('copyMainBtn');
+            if (copyMainBtn) {
+                copyMainBtn.addEventListener('click', function() {
+                    console.log('Copy main button clicked');
+                    copyAlertMessage();
+                });
+            }
+
+            const closeModalBtn = document.getElementById('closeModalBtn');
+            if (closeModalBtn) {
+                closeModalBtn.addEventListener('click', function() {
+                    console.log('Close modal button clicked');
+                    closeAlertModal();
+                });
+            }
+
+            // 绑定右上角关闭按钮 (×) - 页面加载时绑定
+            const closeSpanBtn = document.getElementById('closeSpanBtn');
+            if (closeSpanBtn) {
+                closeSpanBtn.addEventListener('click', function() {
+                    console.log('Close span button clicked (DOMContentLoaded)');
+                    closeAlertModal();
+                });
+            }
+        });
+
         // 点击模态框外部关闭
         window.onclick = function(event) {
             const recordModal = document.getElementById('recordModal');
             const quickAddModal = document.getElementById('quickAddModal');
             const editModal = document.getElementById('editModal');
+            const alertModal = document.getElementById('alertModal');
 
             if (event.target === recordModal) {
                 closeModal();
@@ -1864,8 +2210,52 @@
                 closeQuickAddModal();
             } else if (event.target === editModal) {
                 closeEditModal();
+            } else if (event.target === alertModal) {
+                closeAlertModal();
             }
         }
     </script>
+
+    <!-- 警报消息模态框 -->
+    <div id="alertModal" class="alert-modal">
+        <div class="alert-modal-content">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h2 style="margin: 0; color: #333;">📋 TradingView 警报消息模板</h2>
+                <span class="close" id="closeSpanBtn" style="font-size: 28px; font-weight: bold; cursor: pointer; color: #aaa;">&times;</span>
+            </div>
+
+            <p style="color: #666; margin-bottom: 15px;">
+                复制以下JSON消息模板到TradingView警报中，系统会自动替换相应的变量：
+            </p>
+
+            <div class="alert-code-block" id="alertCodeBlock">
+                <button class="copy-code-btn" id="copyCodeBtn">复制</button>
+                <div id="alertMessageContent"></div>
+            </div>
+
+            <div style="background: #e8f4fd; border: 1px solid #bee5eb; border-radius: 6px; padding: 15px; margin-top: 15px;">
+                <h4 style="margin: 0 0 10px 0; color: #0c5460;">📝 使用说明：</h4>
+                <ul style="margin: 0; padding-left: 20px; color: #0c5460;">
+                    <li><strong>accountName</strong>: 自动使用当前选中的账户</li>
+                    <li><strong>tv_id</strong>: 自动生成随机整数ID</li>
+                    <li><strong>{{ticker}}</strong>: TradingView会替换为当前交易对</li>
+                    <li><strong>{{strategy.order.action}}</strong>: TradingView会替换为策略动作</li>
+                    <li><strong>{{plot("size")}}</strong>: TradingView会替换为自定义size值</li>
+                    <li><strong>{{close}}</strong>: TradingView会替换为当前收盘价</li>
+                    <li>其他变量会被TradingView自动替换为相应的值</li>
+                </ul>
+            </div>
+
+            <div style="text-align: center; margin-top: 20px;">
+                <button id="copyMainBtn" style="background: #28a745; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 14px;">
+                    📋 复制到剪贴板
+                </button>
+                <button id="closeModalBtn" style="background: #6c757d; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 14px; margin-left: 10px;">
+                    关闭
+                </button>
+            </div>
+        </div>
+    </div>
+
 </body>
 </html>

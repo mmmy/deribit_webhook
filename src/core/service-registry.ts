@@ -14,6 +14,7 @@ import { OptionService } from '../services/option-service';
 import { OptionTradingService } from '../services/option-trading';
 import { WeChatNotificationService } from '../services/wechat-notification';
 import { PositionPollingService } from '../polling/position-poller';
+import { ClientFactory } from '../factory/client-factory';
 
 import { DIContainer } from './di-container';
 import { SERVICE_TOKENS } from './service-tokens';
@@ -88,6 +89,13 @@ export function registerServices(container: DIContainer): void {
     (container) => new WeChatNotificationService(
       container.resolve(SERVICE_TOKENS.ConfigLoader)
     ),
+    { singleton: true }
+  );
+
+  // 注册ClientFactory (单例)
+  container.register(
+    SERVICE_TOKENS.ClientFactory,
+    () => ClientFactory.getInstance(),
     { singleton: true }
   );
 

@@ -8,6 +8,7 @@ import {
 } from '../services';
 import { DeribitPrivateAPI, createAuthInfo, getConfigByEnvironment } from '../api';
 import { getConfigLoader, getDeribitClient, getMockDeribitClient, getDeribitAuth, getOptionTradingService } from '../core';
+import { validateAccountFromParams } from '../middleware/account-validation';
 
 const router = Router();
 
@@ -104,21 +105,13 @@ router.get('/api/instrument/:instrumentName', async (req, res) => {
 });
 
 // Get account positions endpoint
-router.get('/api/account/:accountName/:currency', async (req, res) => {
+router.get('/api/account/:accountName/:currency', validateAccountFromParams('accountName'), async (req, res) => {
   try {
     const { accountName, currency } = req.params;
     const currencyUpper = currency.toUpperCase();
-    const configLoader = getConfigLoader();
-
-    // Validate account
-    const account = configLoader.getAccountByName(accountName);
-    if (!account) {
-      return res.status(404).json({
-        success: false,
-        message: `Account not found: ${accountName}`,
-        timestamp: new Date().toISOString()
-      });
-    }
+    
+    // Account validation is now handled by middleware
+    // req.validatedAccount contains the validated account
 
     const useMockMode = process.env.USE_MOCK_MODE === 'true';
 

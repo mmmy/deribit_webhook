@@ -13,6 +13,7 @@ import { OrderSupportDependencies } from './order-support-functions';
 import { placeOptionOrder as placeOptionOrderPure, PlaceOrderDependencies } from './place-option-order';
 import { executePositionAdjustmentByTvId, executePositionCloseByTvId } from './position-adjustment';
 import { wechatNotification } from './wechat-notification';
+import { accountValidationService } from '../middleware/account-validation';
 
 
 export class OptionTradingService {
@@ -42,15 +43,9 @@ export class OptionTradingService {
    */
   async processWebhookSignal(payload: WebhookSignalPayload): Promise<OptionTradingResult> {
     try {
-      // 1. 验证账户
-      const account = this.configLoader.getAccountByName(payload.accountName);
-      if (!account) {
-        throw new Error(`Account not found: ${payload.accountName}`);
-      }
-
-      if (!account.enabled) {
-        throw new Error(`Account is disabled: ${payload.accountName}`);
-      }
+      // 1. 验证账户 - 使用统一的账户验证服务
+      const account = accountValidationService.validateAccount(payload.accountName);
+      console.log(`✅ Account validation successful: ${account.name} (enabled: ${account.enabled})`);
 
       // 2. 验证认证 (在Mock模式下跳过真实认证)
       const useMockMode = process.env.USE_MOCK_MODE === 'true';

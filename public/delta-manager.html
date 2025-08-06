@@ -1140,16 +1140,17 @@
                     throw new Error(liveData.message);
                 }
 
-                // 更新数据
-                deltaRecords = deltaData.records || [];
-                livePositions = liveData.data.positions || [];
-                liveOrders = liveData.data.openOrders || [];
+                // 更新数据 - 适配新的ApiResponse格式
+                deltaRecords = deltaData.data?.records || deltaData.records || [];
+                livePositions = liveData.data?.positions || liveData.data?.data?.positions || [];
+                liveOrders = liveData.data?.openOrders || liveData.data?.data?.openOrders || [];
 
                 // 验证记录有效性
                 validateRecords();
 
-                // 更新界面
-                updateStats(deltaData.summary);
+                // 更新界面 - 适配新的数据结构
+                const summaryData = deltaData.data?.summary || deltaData.summary || {};
+                updateStats(summaryData);
                 updatePositionRecordsTable();
                 updateOrderRecordsTable();
                 updatePositionsTable();
@@ -1166,15 +1167,19 @@
 
         // 更新统计信息
         function updateStats(summary) {
+            // 确保summary对象存在，提供默认值
+            const safeSummary = summary || {};
+            
             // 计算详细统计
             const positionRecords = validatedRecords.filter(record => record.record_type === 'position');
             const orderRecords = deltaRecords.filter(record => record.record_type === 'order');
 
             // 更新主要数值 (只有仓位有Delta值)
-            document.getElementById('totalDelta').textContent = (summary.position_delta || 0).toFixed(4);
-            document.getElementById('positionDelta').textContent = (summary.position_delta || 0).toFixed(4);
+            const positionDelta = safeSummary.position_delta || safeSummary.total_delta || 0;
+            document.getElementById('totalDelta').textContent = positionDelta.toFixed(4);
+            document.getElementById('positionDelta').textContent = positionDelta.toFixed(4);
             document.getElementById('orderCount').textContent = orderRecords.length;
-            document.getElementById('recordCount').textContent = summary.record_count || 0;
+            document.getElementById('recordCount').textContent = safeSummary.record_count || deltaRecords.length || 0;
 
             // 更新子标题
             document.getElementById('positionCount').textContent = `${positionRecords.length}个仓位`;
@@ -1183,8 +1188,6 @@
             // 设置颜色 (只有仓位Delta需要颜色)
             const totalElement = document.getElementById('totalDelta');
             const positionElement = document.getElementById('positionDelta');
-
-            const positionDelta = summary.position_delta || 0;
 
             totalElement.className = positionDelta >= 0 ? 'value delta-positive' : 'value delta-negative';
             positionElement.className = positionDelta >= 0 ? 'value delta-positive' : 'value delta-negative';

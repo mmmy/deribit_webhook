@@ -3,6 +3,7 @@ import { ConfigLoader, DeribitAuth, MockDeribitClient } from '../services';
 import { validateAccountFromQuery } from '../middleware/account-validation';
 import { getUnifiedClient } from '../factory/client-factory';
 import { getAuthenticationService } from '../services/authentication-service';
+import { ApiResponse } from '../utils/response-formatter';
 
 const router = Router();
 
@@ -21,43 +22,31 @@ router.get('/api/auth/test', validateAccountFromQuery('account'), async (req, re
       // Use unified mock client
       const authResult = await (client as any).mockClient.authenticate(req.validatedAccount!);
       
-      res.json({
-        success: true,
-        message: 'Authentication successful (MOCK MODE)',
+      return ApiResponse.ok(res, {
         account: accountName,
         mockMode: true,
         tokenType: authResult.result.token_type,
-        expiresIn: authResult.result.expires_in,
-        timestamp: new Date().toISOString()
-      });
+        expiresIn: authResult.result.expires_in
+      }, { message: 'Authentication successful (MOCK MODE)' });
     } else {
       // Use real client with unified authentication service
       const authResult = await getAuthenticationService().authenticate(accountName);
 
       if (authResult.success && authResult.token) {
-        res.json({
-          success: true,
-          message: 'Authentication successful',
+        return ApiResponse.ok(res, {
           account: accountName,
           mockMode: false,
-          tokenExpiry: new Date(authResult.token.expiresAt).toISOString(),
-          timestamp: new Date().toISOString()
-        });
+          tokenExpiry: new Date(authResult.token.expiresAt).toISOString()
+        }, { message: 'Authentication successful' });
       } else {
-        res.status(401).json({
-          success: false,
-          message: authResult.error || 'Authentication failed',
-          account: accountName,
-          timestamp: new Date().toISOString()
+        return ApiResponse.unauthorized(res, authResult.error || 'Authentication failed', {
+          meta: { accountName }
         });
       }
     }
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Authentication error',
-      error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString()
+    return ApiResponse.internalError(res, error as Error, {
+      message: 'Authentication error'
     });
   }
 });

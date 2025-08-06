@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { PollingManager } from '../polling/polling-manager';
 import { ConfigLoader } from '../services';
+import { ApiResponse } from '../utils/response-formatter';
 
 const router = Router();
 
@@ -14,20 +15,10 @@ router.post('/api/positions/poll', async (req, res) => {
 
     const results = await pollingManager.triggerPolling();
 
-    res.json({
-      success: true,
-      message: 'Positions polling completed successfully',
-      data: results,
-      timestamp: new Date().toISOString()
-    });
+    return ApiResponse.ok(res, results, { message: 'Positions polling completed successfully' });
   } catch (error) {
     console.error('Manual polling failed:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to poll positions',
-      error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString()
-    });
+    return ApiResponse.internalError(res, error as Error, { message: 'Failed to poll positions' });
   }
 });
 

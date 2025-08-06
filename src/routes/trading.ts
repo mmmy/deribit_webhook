@@ -11,6 +11,7 @@ import { getConfigLoader, getDeribitClient, getMockDeribitClient, getDeribitAuth
 import { validateAccountFromParams } from '../middleware/account-validation';
 import { getUnifiedClient } from '../factory/client-factory';
 import { getAuthenticationService } from '../services/authentication-service';
+import { ApiResponse } from '../utils/response-formatter';
 
 const router = Router();
 
@@ -24,22 +25,15 @@ router.get('/api/instruments', async (req, res) => {
     const client = getUnifiedClient();
     const instruments = await client.getInstruments(currency, kind);
     
-    res.json({
-      success: true,
+    return ApiResponse.ok(res, {
       mockMode: client.isMock,
       currency,
       kind,
       count: instruments.length,
-      instruments,
-      timestamp: new Date().toISOString()
+      instruments
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get instruments',
-      error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString()
-    });
+    return ApiResponse.internalError(res, error instanceof Error ? error.message : 'Unknown error');
   }
 });
 
@@ -49,31 +43,20 @@ router.get('/api/instrument/:instrumentName', async (req, res) => {
     const instrumentName = req.params.instrumentName;
     
     if (!instrumentName) {
-      return res.status(400).json({
-        success: false,
-        message: 'Instrument name is required',
-        timestamp: new Date().toISOString()
-      });
+      return ApiResponse.badRequest(res, 'Instrument name is required');
     }
 
     // 使用统一客户端，自动处理Mock/Real模式
     const client = getUnifiedClient();
     const instrument = await client.getInstrument(instrumentName);
     
-    res.json({
-      success: true,
+    return ApiResponse.ok(res, {
       mockMode: client.isMock,
       instrumentName,
-      instrument,
-      timestamp: new Date().toISOString()
+      instrument
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get instrument',
-      error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString()
-    });
+    return ApiResponse.internalError(res, error instanceof Error ? error.message : 'Unknown error');
   }
 });
 
@@ -93,26 +76,25 @@ router.get('/api/account/:accountName/:currency', validateAccountFromParams('acc
       // Mock mode: return simulated data
       const summary = await client.getAccountSummary(currencyUpper);
       
-      res.json({
-        success: true,
-        mockMode: true,
-        accountName,
-        currency: currencyUpper,
-        data: {
-          summary,
-          positions: [
-            {
-              instrument_name: `${currencyUpper}-25JUL25-50000-C`,
-              size: 10.5,
-              direction: 'buy',
-              average_price: 0.025,
-              mark_price: 0.028,
-              unrealized_pnl: 0.315,
-              delta: 0.65
-            }
-          ]
-        },
-        timestamp: new Date().toISOString()
+      return ApiResponse.ok(res, {
+        summary,
+        positions: [
+          {
+            instrument_name: `${currencyUpper}-25JUL25-50000-C`,
+            size: 10.5,
+            direction: 'buy',
+            average_price: 0.025,
+            mark_price: 0.028,
+            unrealized_pnl: 0.315,
+            delta: 0.65
+          }
+        ]  
+      }, {
+        meta: { 
+          mockMode: true, 
+          accountName, 
+          currency: currencyUpper 
+        } 
       });
     } else {
       // Real mode: call Deribit API
@@ -143,37 +125,28 @@ router.get('/api/account/:accountName/:currency', validateAccountFromParams('acc
           })
         ]);
 
-        res.json({
-          success: true,
-          mockMode: false,
-          accountName,
-          currency: currencyUpper,
-          data: {
-            summary: accountSummary,
-            positions: positions,
-            timestamp: new Date().toISOString()
-          }
+        return ApiResponse.ok(res, {
+          summary: accountSummary,
+          positions: positions,
+          timestamp: new Date().toISOString()
+        }, { 
+          meta: { 
+            mockMode: false, 
+            accountName, 
+            currency: currencyUpper 
+          } 
         });
 
       } catch (authError) {
         console.error(`Authentication error for account ${accountName}:`, authError);
-        res.status(401).json({
-          success: false,
-          message: 'Authentication failed',
-          accountName,
-          error: authError instanceof Error ? authError.message : 'Unknown auth error',
-          timestamp: new Date().toISOString()
+        return ApiResponse.unauthorized(res, authError instanceof Error ? authError.message : 'Unknown auth error', { 
+          meta: { accountName } 
         });
       }
     }
   } catch (error) {
     console.error('Error in account positions endpoint:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get account positions',
-      error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString()
-    });
+    return ApiResponse.internalError(res, error instanceof Error ? error.message : 'Unknown error');
   }
 });
 
@@ -183,18 +156,9 @@ router.get('/api/trading/status', async (req, res) => {
     const optionTradingService = getOptionTradingService();
     const status = await optionTradingService.getTradingStatus();
     
-    res.json({
-      success: true,
-      data: status,
-      timestamp: new Date().toISOString()
-    });
+    return ApiResponse.ok(res, status);
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get trading status',
-      error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString()
-    });
+    return ApiResponse.internalError(res, error instanceof Error ? error.message : 'Unknown error');
   }
 });
 
@@ -210,19 +174,11 @@ router.get('/api/options/:currency/delta/:delta', async (req, res) => {
     const longSideValue = (longSide as string).toLowerCase() === 'true';
 
     if (isNaN(deltaValue) || deltaValue < -1 || deltaValue > 1) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid delta value. Must be between -1 and 1',
-        timestamp: new Date().toISOString()
-      });
+      return ApiResponse.badRequest(res, 'Invalid delta value. Must be between -1 and 1');
     }
 
     if (isNaN(minExpiredDaysValue) || minExpiredDaysValue < 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid minExpiredDays value. Must be a positive number',
-        timestamp: new Date().toISOString()
-      });
+      return ApiResponse.badRequest(res, 'Invalid minExpiredDays value. Must be a positive number');
     }
 
     console.log(`🎯 Finding option by delta: ${currency}, delta: ${deltaValue}, minExpiredDays: ${minExpiredDaysValue}, longSide: ${longSideValue}`);
@@ -232,43 +188,32 @@ router.get('/api/options/:currency/delta/:delta', async (req, res) => {
     const result = await client.getInstrumentByDelta(currency.toUpperCase(), minExpiredDaysValue, deltaValue, longSideValue);
 
     if (result) {
-      res.json({
-        success: true,
-        message: `Found optimal option for delta ${deltaValue}`,
-        data: {
-          instrument: result,
-          searchParams: {
-            currency: currency.toUpperCase(),
-            targetDelta: deltaValue,
-            minExpiredDays: minExpiredDaysValue,
-            longSide: longSideValue,
-            optionType: longSideValue ? 'call' : 'put'
-          }
-        },
-        timestamp: new Date().toISOString()
-      });
-    } else {
-      res.status(404).json({
-        success: false,
-        message: `No suitable option found for delta ${deltaValue}`,
+      return ApiResponse.ok(res, {
+        instrument: result,
         searchParams: {
           currency: currency.toUpperCase(),
           targetDelta: deltaValue,
           minExpiredDays: minExpiredDaysValue,
-          longSide: longSideValue
-        },
-        timestamp: new Date().toISOString()
+          longSide: longSideValue,
+          optionType: longSideValue ? 'call' : 'put'
+        }
+      }, { message: `Found optimal option for delta ${deltaValue}` });
+    } else {
+      return ApiResponse.notFound(res, `No suitable option found for delta ${deltaValue}`, {
+        meta: {
+          searchParams: {
+            currency: currency.toUpperCase(),
+            targetDelta: deltaValue,
+            minExpiredDays: minExpiredDaysValue,
+            longSide: longSideValue
+          }
+        }
       });
     }
 
   } catch (error) {
     console.error('Error in delta filter endpoint:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to find option by delta',
-      error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString()
-    });
+    return ApiResponse.internalError(res, error instanceof Error ? error.message : 'Unknown error');
   }
 });
 

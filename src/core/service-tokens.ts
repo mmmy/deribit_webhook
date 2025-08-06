@@ -26,7 +26,8 @@ export const SERVICE_TOKENS = {
   
   // 工具服务
   WechatNotificationService: Symbol('WechatNotificationService'),
-  PositionPollingService: Symbol('PositionPollingService')
+  PositionPollingService: Symbol('PositionPollingService'),
+  ResponseFormatter: Symbol('ResponseFormatter')
 } as const;
 
 // 服务令牌类型

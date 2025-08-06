@@ -15,6 +15,7 @@ import { OptionTradingService } from '../services/option-trading';
 import { WeChatNotificationService } from '../services/wechat-notification';
 import { PositionPollingService } from '../polling/position-poller';
 import { ClientFactory } from '../factory/client-factory';
+import { AuthenticationService } from '../services/authentication-service';
 
 import { DIContainer } from './di-container';
 import { SERVICE_TOKENS } from './service-tokens';
@@ -34,6 +35,13 @@ export function registerServices(container: DIContainer): void {
   container.register(
     SERVICE_TOKENS.DeribitAuth,
     () => new DeribitAuth(),
+    { singleton: true }
+  );
+
+  // 注册AuthenticationService (单例)
+  container.register(
+    SERVICE_TOKENS.AuthenticationService,
+    () => AuthenticationService.getInstance(),
     { singleton: true }
   );
 

@@ -10,6 +10,7 @@ import { DeribitPrivateAPI, createAuthInfo, getConfigByEnvironment } from '../ap
 import { getConfigLoader, getDeribitClient, getMockDeribitClient, getDeribitAuth, getOptionTradingService, getClientFactory } from '../core';
 import { validateAccountFromParams } from '../middleware/account-validation';
 import { getUnifiedClient } from '../factory/client-factory';
+import { getAuthenticationService } from '../services/authentication-service';
 
 const router = Router();
 
@@ -116,18 +117,17 @@ router.get('/api/account/:accountName/:currency', validateAccountFromParams('acc
     } else {
       // Real mode: call Deribit API
       try {
-        const deribitAuth = getDeribitAuth();
-        await deribitAuth.authenticate(accountName);
-        const tokenInfo = deribitAuth.getTokenInfo(accountName);
-
-        if (!tokenInfo) {
-          throw new Error('Authentication failed');
+        // 使用统一认证服务
+        const authResult = await getAuthenticationService().authenticate(accountName);
+        
+        if (!authResult.success || !authResult.token) {
+          throw new Error(authResult.error || 'Authentication failed');
         }
 
         // Configure API
         const isTestEnv = process.env.USE_TEST_ENVIRONMENT === 'true';
         const apiConfig = getConfigByEnvironment(isTestEnv);
-        const authInfo = createAuthInfo(tokenInfo.accessToken);
+        const authInfo = createAuthInfo(authResult.token.accessToken);
 
         // Create private API instance
         const privateAPI = new DeribitPrivateAPI(apiConfig, authInfo);

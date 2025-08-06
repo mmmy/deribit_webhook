@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { ConfigLoader, DeribitAuth, MockDeribitClient } from '../services';
 import { validateAccountFromQuery } from '../middleware/account-validation';
 import { getUnifiedClient } from '../factory/client-factory';
+import { getAuthenticationService } from '../services/authentication-service';
 
 const router = Router();
 
@@ -30,24 +31,22 @@ router.get('/api/auth/test', validateAccountFromQuery('account'), async (req, re
         timestamp: new Date().toISOString()
       });
     } else {
-      // Use real client
-      const deribitAuth = new DeribitAuth();
-      const success = await deribitAuth.testConnection(accountName);
+      // Use real client with unified authentication service
+      const authResult = await getAuthenticationService().authenticate(accountName);
 
-      if (success) {
-        const tokenInfo = deribitAuth.getTokenInfo(accountName);
+      if (authResult.success && authResult.token) {
         res.json({
           success: true,
           message: 'Authentication successful',
           account: accountName,
           mockMode: false,
-          tokenExpiry: tokenInfo ? new Date(tokenInfo.expiresAt).toISOString() : null,
+          tokenExpiry: new Date(authResult.token.expiresAt).toISOString(),
           timestamp: new Date().toISOString()
         });
       } else {
         res.status(401).json({
           success: false,
-          message: 'Authentication failed',
+          message: authResult.error || 'Authentication failed',
           account: accountName,
           timestamp: new Date().toISOString()
         });

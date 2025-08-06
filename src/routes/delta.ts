@@ -10,6 +10,7 @@ import {
 import { DeribitPrivateAPI, createAuthInfo, getConfigByEnvironment } from '../api';
 import { validateAccountFromParams } from '../middleware/account-validation';
 import { getAuthenticationService } from '../services/authentication-service';
+import { ApiResponse } from '../utils/response-formatter';
 
 const router = Router();
 
@@ -38,8 +39,7 @@ router.get('/api/delta/:accountId', validateAccountFromParams('accountId'), asyn
     // Get account summary
     const summary = deltaManager.getAccountSummary(accountId);
 
-    res.json({
-      success: true,
+    return ApiResponse.ok(res, {
       accountId,
       records,
       summary: summary[0] || {
@@ -48,16 +48,10 @@ router.get('/api/delta/:accountId', validateAccountFromParams('accountId'), asyn
         position_delta: 0,
         order_delta: 0,
         record_count: 0
-      },
-      timestamp: new Date().toISOString()
+      }
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get delta records',
-      error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString()
-    });
+    return ApiResponse.internalError(res, error instanceof Error ? error.message : 'Unknown error');
   }
 });
 
@@ -212,16 +206,15 @@ router.get('/api/delta/:accountId/live-data', validateAccountFromParams('account
       }
     }
 
-    res.json({
-      success: true,
-      accountId,
-      currencies: ['BTC', 'ETH', 'SOL'],
-      mockMode: useMockMode,
-      data: {
-        positions,
-        openOrders
-      },
-      timestamp: new Date().toISOString()
+    return ApiResponse.ok(res, {
+      positions,
+      openOrders
+    }, {
+      meta: {
+        accountId,
+        currencies: ['BTC', 'ETH', 'SOL'],
+        mockMode: useMockMode
+      }
     });
   } catch (error) {
     res.status(500).json({
@@ -248,20 +241,12 @@ router.post('/api/delta/:accountId', validateAccountFromParams('accountId'), asy
 
     // Validate required fields
     if (!instrument_name || finalTargetDelta === undefined || !record_type) {
-      return res.status(400).json({
-        success: false,
-        message: 'Missing required fields: instrument_name, target_delta (or delta), record_type',
-        timestamp: new Date().toISOString()
-      });
+      return ApiResponse.badRequest(res, 'Missing required fields: instrument_name, target_delta (or delta), record_type');
     }
 
     // Validate min_expire_days if provided
     if (finalMinExpireDays !== null && finalMinExpireDays <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'min_expire_days must be greater than 0 or null',
-        timestamp: new Date().toISOString()
-      });
+      return ApiResponse.badRequest(res, 'min_expire_days must be greater than 0 or null');
     }
 
     // Account validation is now handled by middleware
@@ -281,12 +266,7 @@ router.post('/api/delta/:accountId', validateAccountFromParams('accountId'), asy
 
     const record = deltaManager.upsertRecord(recordInput);
 
-    res.json({
-      success: true,
-      message: 'Delta record created/updated successfully',
-      record,
-      timestamp: new Date().toISOString()
-    });
+    return ApiResponse.ok(res, record, { message: 'Delta record created/updated successfully' });
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -311,20 +291,12 @@ router.put('/api/delta/:accountId/:recordId', validateAccountFromParams('account
     // Validate record exists and belongs to account
     const existingRecord = deltaManager.getRecordById(parseInt(recordId));
     if (!existingRecord || existingRecord.account_id !== accountId) {
-      return res.status(404).json({
-        success: false,
-        message: 'Record not found or does not belong to this account',
-        timestamp: new Date().toISOString()
-      });
+      return ApiResponse.notFound(res, 'Record not found or does not belong to this account');
     }
 
     // Validate min_expire_days if provided
     if (min_expire_days !== undefined && min_expire_days !== null && min_expire_days <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'min_expire_days must be greater than 0 or null',
-        timestamp: new Date().toISOString()
-      });
+      return ApiResponse.badRequest(res, 'min_expire_days must be greater than 0 or null');
     }
 
     // Update record
@@ -338,19 +310,10 @@ router.put('/api/delta/:accountId/:recordId', validateAccountFromParams('account
     const updatedRecord = deltaManager.updateRecord(parseInt(recordId), updateData);
 
     if (!updatedRecord) {
-      return res.status(404).json({
-        success: false,
-        message: 'Failed to update record',
-        timestamp: new Date().toISOString()
-      });
+      return ApiResponse.notFound(res, 'Failed to update record');
     }
 
-    res.json({
-      success: true,
-      message: 'Delta record updated successfully',
-      record: updatedRecord,
-      timestamp: new Date().toISOString()
-    });
+    return ApiResponse.ok(res, updatedRecord, { message: 'Delta record updated successfully' });
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -374,29 +337,17 @@ router.delete('/api/delta/:accountId/:recordId', validateAccountFromParams('acco
     // Validate record exists and belongs to account
     const existingRecord = deltaManager.getRecordById(parseInt(recordId));
     if (!existingRecord || existingRecord.account_id !== accountId) {
-      return res.status(404).json({
-        success: false,
-        message: 'Record not found or does not belong to this account',
-        timestamp: new Date().toISOString()
-      });
+      return ApiResponse.notFound(res, 'Record not found or does not belong to this account');
     }
 
     // Delete record
     const deleted = deltaManager.deleteRecord(parseInt(recordId));
 
     if (!deleted) {
-      return res.status(404).json({
-        success: false,
-        message: 'Failed to delete record',
-        timestamp: new Date().toISOString()
-      });
+      return ApiResponse.notFound(res, 'Failed to delete record');
     }
 
-    res.json({
-      success: true,
-      message: 'Delta record deleted successfully',
-      timestamp: new Date().toISOString()
-    });
+    return ApiResponse.ok(res, null, { message: 'Delta record deleted successfully' });
   } catch (error) {
     res.status(500).json({
       success: false,

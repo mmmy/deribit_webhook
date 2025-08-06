@@ -6,7 +6,7 @@
  */
 
 import { Request, Response, NextFunction } from 'express';
-import { getConfigLoader } from '../core';
+import { ConfigLoader } from '../config';
 import type { ApiKeyConfig } from '../types';
 
 /**
@@ -51,7 +51,17 @@ declare global {
  * 账户验证服务类
  */
 export class AccountValidationService {
-  private configLoader = getConfigLoader();
+  private configLoader: ConfigLoader | null = null;
+
+  /**
+   * 延迟初始化ConfigLoader（避免循环依赖）
+   */
+  private getConfigLoader(): ConfigLoader {
+    if (!this.configLoader) {
+      this.configLoader = ConfigLoader.getInstance();
+    }
+    return this.configLoader;
+  }
 
   /**
    * 验证账户存在性和启用状态
@@ -60,7 +70,7 @@ export class AccountValidationService {
    * @throws AccountValidationError 账户不存在或被禁用
    */
   public validateAccount(accountName: string): ApiKeyConfig {
-    const account = this.configLoader.getAccountByName(accountName);
+    const account = this.getConfigLoader().getAccountByName(accountName);
     
     if (!account) {
       throw new AccountNotFoundError(`Account not found: ${accountName}`);
@@ -103,7 +113,7 @@ export class AccountValidationService {
    * @returns 账户验证结果
    */
   public checkAccount(accountName: string): { exists: boolean; enabled: boolean; account?: ApiKeyConfig } {
-    const account = this.configLoader.getAccountByName(accountName);
+    const account = this.getConfigLoader().getAccountByName(accountName);
     
     if (!account) {
       return { exists: false, enabled: false };

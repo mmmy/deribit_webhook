@@ -1,5 +1,7 @@
 import { ConfigLoader } from '../config';
 import { DeltaManager } from '../database/delta-manager';
+import { getUnifiedClient, isMockMode } from '../factory/client-factory';
+import { accountValidationService } from '../middleware/account-validation';
 import {
   OptionTradingAction,
   OptionTradingParams,
@@ -7,15 +9,13 @@ import {
   WebhookSignalPayload
 } from '../types';
 import { DeribitAuth } from './auth';
+import { getAuthenticationService } from './authentication-service';
 import { DeribitClient } from './deribit-client';
 import { MockDeribitClient } from './mock-deribit';
 import { OrderSupportDependencies } from './order-support-functions';
 import { placeOptionOrder as placeOptionOrderPure, PlaceOrderDependencies } from './place-option-order';
 import { executePositionAdjustmentByTvId, executePositionCloseByTvId } from './position-adjustment';
 import { wechatNotification } from './wechat-notification';
-import { accountValidationService } from '../middleware/account-validation';
-import { getUnifiedClient, isMockMode } from '../factory/client-factory';
-import { getAuthenticationService } from './authentication-service';
 
 
 export class OptionTradingService {
@@ -321,6 +321,13 @@ export class OptionTradingService {
           // 确定平仓比例，默认全平
           const closeRatio = params.closeRatio || 1.0;
 
+          // 查询相关的合约名称用于通知
+          const deltaRecords = this.deltaManager.getRecords({
+            account_id: params.accountName,
+            tv_id: params.tv_id
+          });
+          const instrumentNames = deltaRecords.map(record => record.instrument_name);
+
           // 发送盈利平仓开始通知到企业微信
           await this.sendProfitCloseNotification(
             params.accountName,
@@ -330,7 +337,8 @@ export class OptionTradingService {
               symbol: params.symbol,
               action: params.action,
               direction: params.direction,
-              closeRatio: closeRatio
+              closeRatio: closeRatio,
+              instrumentNames: instrumentNames
             }
           );
 
@@ -358,7 +366,8 @@ export class OptionTradingService {
               action: params.action,
               direction: params.direction,
               closeRatio: closeRatio,
-              result: closeResult
+              result: closeResult,
+              instrumentNames: closeResult.closedInstruments
             }
           );
 
@@ -670,6 +679,7 @@ ${directionEmoji} **操作**: ${actionText[details.action] || details.action}
       direction: 'buy' | 'sell';
       closeRatio: number;
       result?: any;
+      instrumentNames?: string[];
     }
   ): Promise<void> {
     try {
@@ -707,6 +717,11 @@ ${directionEmoji} **操作**: ${actionText[details.action] || details.action}
 🔢 **TV信号ID**: ${tvId}
 👤 **账户**: ${accountName}
 ⏰ **时间**: ${new Date().toLocaleString('zh-CN')}`;
+
+      // 添加合约名称信息
+      if (details.instrumentNames && details.instrumentNames.length > 0) {
+        content += `\n🎯 **合约名称**: ${details.instrumentNames.join(', ')}`;
+      }
 
       if (status === 'START') {
         content += `\n📋 **状态**: 开始执行盈利平仓操作`;

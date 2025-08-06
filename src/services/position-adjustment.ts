@@ -303,6 +303,11 @@ export async function executePositionCloseByTvId(
     const successCount = closeResults.filter(r => r.success).length;
     const totalCount = closeResults.length;
 
+    // 收集成功平仓的合约名称
+    const closedInstruments = closeResults
+      .filter(r => r.success && 'instrument' in r)
+      .map(r => (r as any).instrument);
+
     // 7. 如果有成功的平仓操作，删除Delta数据库中对应tv_id的所有记录
     if (successCount > 0) {
       try {
@@ -319,7 +324,8 @@ export async function executePositionCloseByTvId(
       message: `Position close completed: ${successCount}/${totalCount} successful`,
       orderId: `tv_close_${tvId}`,
       executedQuantity: successCount,
-      closeRatio: closeRatio
+      closeRatio: closeRatio,
+      closedInstruments: closedInstruments
     };
 
   } catch (error) {

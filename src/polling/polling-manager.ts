@@ -1,4 +1,5 @@
 import { PositionPollingService, PollingResult } from './position-poller';
+import { getPositionPollingService } from '../core';
 
 /**
  * Polling manager - handles scheduled position polling
@@ -9,7 +10,7 @@ export class PollingManager {
   private isRunning: boolean = false;
 
   constructor() {
-    this.pollingService = new PositionPollingService();
+    this.pollingService = getPositionPollingService();
   }
 
   /**

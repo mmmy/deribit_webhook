@@ -9,8 +9,9 @@ export class WeChatNotificationService {
   private bots: Map<string, WeChatBot> = new Map();
   private configLoader: ConfigLoader;
 
-  constructor() {
-    this.configLoader = ConfigLoader.getInstance();
+  constructor(configLoader?: ConfigLoader) {
+    // 支持依赖注入，但保持向后兼容
+    this.configLoader = configLoader || ConfigLoader.getInstance();
     this.initializeBots();
   }
 

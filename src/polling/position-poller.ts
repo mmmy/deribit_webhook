@@ -28,12 +28,19 @@ export class PositionPollingService {
   private deltaManager: DeltaManager;
   private useMockMode: boolean;
 
-  constructor() {
-    this.configLoader = ConfigLoader.getInstance();
-    this.deribitAuth = new DeribitAuth();
-    this.deribitClient = new DeribitClient();
-    this.mockClient = new MockDeribitClient();
-    this.deltaManager = DeltaManager.getInstance();
+  constructor(
+    configLoader?: ConfigLoader,
+    deribitAuth?: DeribitAuth,
+    deribitClient?: DeribitClient,
+    mockClient?: MockDeribitClient,
+    deltaManager?: DeltaManager
+  ) {
+    // 支持依赖注入，但保持向后兼容
+    this.configLoader = configLoader || ConfigLoader.getInstance();
+    this.deribitAuth = deribitAuth || new DeribitAuth();
+    this.deribitClient = deribitClient || new DeribitClient();
+    this.mockClient = mockClient || new MockDeribitClient();
+    this.deltaManager = deltaManager || DeltaManager.getInstance();
     this.useMockMode = process.env.USE_MOCK_MODE === 'true';
   }
 

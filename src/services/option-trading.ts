@@ -22,12 +22,19 @@ export class OptionTradingService {
   private mockClient: MockDeribitClient;
   private deltaManager: DeltaManager;
 
-  constructor() {
-    this.deribitAuth = new DeribitAuth();
-    this.configLoader = ConfigLoader.getInstance();
-    this.deribitClient = new DeribitClient();
-    this.mockClient = new MockDeribitClient();
-    this.deltaManager = new DeltaManager();
+  constructor(
+    deribitAuth?: DeribitAuth,
+    configLoader?: ConfigLoader,
+    deribitClient?: DeribitClient,
+    mockClient?: MockDeribitClient,
+    deltaManager?: DeltaManager
+  ) {
+    // 支持依赖注入，但保持向后兼容
+    this.deribitAuth = deribitAuth || new DeribitAuth();
+    this.configLoader = configLoader || ConfigLoader.getInstance();
+    this.deribitClient = deribitClient || new DeribitClient();
+    this.mockClient = mockClient || new MockDeribitClient();
+    this.deltaManager = deltaManager || DeltaManager.getInstance();
   }
 
   /**

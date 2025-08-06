@@ -5,6 +5,7 @@ import {
   WebhookResponse, 
   WebhookSignalPayload 
 } from '../services';
+import { getConfigLoader, getOptionTradingService } from '../core';
 
 const router = Router();
 
@@ -41,7 +42,7 @@ router.post('/webhook/signal', async (req, res) => {
     }
 
     // 3. Validate account
-    const configLoader = ConfigLoader.getInstance();
+    const configLoader = getConfigLoader();
     const account = configLoader.getAccountByName(payload.accountName);
     if (!account) {
       return res.status(404).json({
@@ -54,7 +55,7 @@ router.post('/webhook/signal', async (req, res) => {
 
     // 4. Process trading signal
     console.log(`🔄 [${requestId}] Processing signal for account: ${payload.accountName}`);
-    const optionTradingService = new OptionTradingService();
+    const optionTradingService = getOptionTradingService();
     const result = await optionTradingService.processWebhookSignal(payload);
 
     // 5. Return result

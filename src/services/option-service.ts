@@ -18,11 +18,17 @@ export class OptionService {
   private mockClient: MockDeribitClient;
   private useMockMode: boolean;
 
-  constructor() {
-    this.configLoader = ConfigLoader.getInstance();
-    this.deribitAuth = new DeribitAuth();
-    this.deribitClient = new DeribitClient();
-    this.mockClient = new MockDeribitClient();
+  constructor(
+    configLoader?: ConfigLoader,
+    deribitAuth?: DeribitAuth,
+    deribitClient?: DeribitClient,
+    mockClient?: MockDeribitClient
+  ) {
+    // 支持依赖注入，但保持向后兼容
+    this.configLoader = configLoader || ConfigLoader.getInstance();
+    this.deribitAuth = deribitAuth || new DeribitAuth();
+    this.deribitClient = deribitClient || new DeribitClient();
+    this.mockClient = mockClient || new MockDeribitClient();
     this.useMockMode = process.env.USE_MOCK_MODE === 'true';
   }
 

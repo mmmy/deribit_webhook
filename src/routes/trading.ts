@@ -7,6 +7,7 @@ import {
   OptionTradingService 
 } from '../services';
 import { DeribitPrivateAPI, createAuthInfo, getConfigByEnvironment } from '../api';
+import { getConfigLoader, getDeribitClient, getMockDeribitClient, getDeribitAuth, getOptionTradingService } from '../core';
 
 const router = Router();
 
@@ -18,7 +19,7 @@ router.get('/api/instruments', async (req, res) => {
     const useMockMode = process.env.USE_MOCK_MODE === 'true';
 
     if (useMockMode) {
-      const mockClient = new MockDeribitClient();
+      const mockClient = getMockDeribitClient();
       const instruments = await mockClient.getInstruments(currency, kind);
       
       res.json({
@@ -31,7 +32,7 @@ router.get('/api/instruments', async (req, res) => {
         timestamp: new Date().toISOString()
       });
     } else {
-      const deribitClient = new DeribitClient();
+      const deribitClient = getDeribitClient();
       const instruments = await deribitClient.getInstruments(currency, kind);
       
       res.json({
@@ -70,7 +71,7 @@ router.get('/api/instrument/:instrumentName', async (req, res) => {
     const useMockMode = process.env.USE_MOCK_MODE === 'true';
 
     if (useMockMode) {
-      const mockClient = new MockDeribitClient();
+      const mockClient = getMockDeribitClient();
       const instrument = await mockClient.getInstrument(instrumentName);
       
       res.json({
@@ -81,7 +82,7 @@ router.get('/api/instrument/:instrumentName', async (req, res) => {
         timestamp: new Date().toISOString()
       });
     } else {
-      const deribitClient = new DeribitClient();
+      const deribitClient = getDeribitClient();
       const instrument = await deribitClient.getInstrument(instrumentName);
       
       res.json({
@@ -107,7 +108,7 @@ router.get('/api/account/:accountName/:currency', async (req, res) => {
   try {
     const { accountName, currency } = req.params;
     const currencyUpper = currency.toUpperCase();
-    const configLoader = ConfigLoader.getInstance();
+    const configLoader = getConfigLoader();
 
     // Validate account
     const account = configLoader.getAccountByName(accountName);
@@ -123,7 +124,7 @@ router.get('/api/account/:accountName/:currency', async (req, res) => {
 
     if (useMockMode) {
       // Mock mode: return simulated data
-      const mockClient = new MockDeribitClient();
+      const mockClient = getMockDeribitClient();
       const summary = await mockClient.getAccountSummary(currencyUpper);
       
       res.json({
@@ -150,7 +151,7 @@ router.get('/api/account/:accountName/:currency', async (req, res) => {
     } else {
       // Real mode: call Deribit API
       try {
-        const deribitAuth = new DeribitAuth();
+        const deribitAuth = getDeribitAuth();
         await deribitAuth.authenticate(accountName);
         const tokenInfo = deribitAuth.getTokenInfo(accountName);
 
@@ -214,7 +215,7 @@ router.get('/api/account/:accountName/:currency', async (req, res) => {
 // Trading service status
 router.get('/api/trading/status', async (req, res) => {
   try {
-    const optionTradingService = new OptionTradingService();
+    const optionTradingService = getOptionTradingService();
     const status = await optionTradingService.getTradingStatus();
     
     res.json({
@@ -265,10 +266,10 @@ router.get('/api/options/:currency/delta/:delta', async (req, res) => {
     let result;
 
     if (useMockMode) {
-      const mockClient = new MockDeribitClient();
+      const mockClient = getMockDeribitClient();
       result = await mockClient.getInstrumentByDelta(currency.toUpperCase(), minExpiredDaysValue, deltaValue, longSideValue);
     } else {
-      const deribitClient = new DeribitClient();
+      const deribitClient = getDeribitClient();
       result = await deribitClient.getInstrumentByDelta(currency.toUpperCase(), minExpiredDaysValue, deltaValue, longSideValue);
     }
 

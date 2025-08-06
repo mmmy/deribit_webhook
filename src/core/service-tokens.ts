@@ -12,6 +12,7 @@ export const SERVICE_TOKENS = {
   
   // 认证相关
   DeribitAuth: Symbol('DeribitAuth'),
+  AuthenticationService: Symbol('AuthenticationService'),
   
   // 客户端相关
   DeribitClient: Symbol('DeribitClient'),

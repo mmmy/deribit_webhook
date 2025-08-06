@@ -18,6 +18,7 @@ import type { OptionTradingService } from '../services/option-trading';
 import type { WeChatNotificationService } from '../services/wechat-notification';
 import type { PositionPollingService } from '../polling/position-poller';
 import type { ClientFactory } from '../factory/client-factory';
+import type { AuthenticationService } from '../services/authentication-service';
 
 // 标记容器是否已初始化
 let isInitialized = false;
@@ -72,6 +73,7 @@ export const getOptionTradingService = (): OptionTradingService => getService(SE
 export const getWeChatNotificationService = (): WeChatNotificationService => getService(SERVICE_TOKENS.WechatNotificationService);
 export const getPositionPollingService = (): PositionPollingService => getService(SERVICE_TOKENS.PositionPollingService);
 export const getClientFactory = (): ClientFactory => getService(SERVICE_TOKENS.ClientFactory);
+export const getAuthenticationService = (): AuthenticationService => getService(SERVICE_TOKENS.AuthenticationService);
 
 // 导出容器实例和令牌
 export { container, SERVICE_TOKENS };

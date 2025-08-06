@@ -15,6 +15,7 @@ import { executePositionAdjustmentByTvId, executePositionCloseByTvId } from './p
 import { wechatNotification } from './wechat-notification';
 import { accountValidationService } from '../middleware/account-validation';
 import { getUnifiedClient, isMockMode } from '../factory/client-factory';
+import { getAuthenticationService } from './authentication-service';
 
 
 export class OptionTradingService {
@@ -48,14 +49,14 @@ export class OptionTradingService {
       const account = accountValidationService.validateAccount(payload.accountName);
       console.log(`✅ Account validation successful: ${account.name} (enabled: ${account.enabled})`);
 
-      // 2. 验证认证 (在Mock模式下跳过真实认证)
-      if (!isMockMode()) {
-        await this.deribitAuth.authenticate(payload.accountName);
-        console.log(`✅ Authentication successful for account: ${payload.accountName}`);
-      } else {
-        // 🔴 DEBUG BREAKPOINT: 在这里设置断点 - Mock认证跳过
-        console.log(`✅ Mock mode - skipping authentication for account: ${payload.accountName}`);
+      // 2. 统一认证处理 (自动处理Mock/Real模式)
+      const authResult = await getAuthenticationService().authenticate(payload.accountName);
+      
+      if (!authResult.success) {
+        throw new Error(authResult.error || 'Authentication failed');
       }
+
+      console.log(`✅ Authentication successful for account: ${payload.accountName} (Mock: ${authResult.isMock})`);
 
       // 3. 解析交易信号
       // 解析tv_id并传递到交易参数中，最后触发交易存到Delta数据库
@@ -770,12 +771,10 @@ ${directionEmoji} **操作**: ${actionText[details.action] || details.action}
 
       console.log(`📊 Found ${deltaRecords.length} delta record(s) for tv_id: ${tvId}`);
 
-      // 2. 获取访问令牌
-      if (!useMockMode) {
-        await this.deribitAuth.authenticate(accountName);
-      }
-      const tokenInfo = this.deribitAuth.getTokenInfo(accountName);
-      if (!tokenInfo && !useMockMode) {
+      // 2. 获取访问令牌 - 使用统一认证服务
+      const authResult = await getAuthenticationService().ensureAuthenticated(accountName);
+      
+      if (!authResult && !useMockMode) {
         return {
           success: false,
           message: `Failed to get access token for account: ${accountName}`
@@ -785,7 +784,7 @@ ${directionEmoji} **操作**: ${actionText[details.action] || details.action}
       // 3. 获取当前仓位信息
       const positions = useMockMode
         ? [] // 模拟模式下暂时返回空数组，实际应该从模拟数据中获取
-        : await this.deribitClient.getPositions(tokenInfo!.accessToken, { kind: 'option' });
+        : await this.deribitClient.getPositions(authResult!.accessToken, { kind: 'option' });
 
       // 4. 对每个Delta记录执行止损操作
       const stopResults = [];
@@ -891,14 +890,14 @@ ${directionEmoji} **操作**: ${actionText[details.action] || details.action}
 
       console.log(`🛑 [Stop Loss] Corrected params: quantity ${stopQuantity} → ${finalQuantity}, price ${initialPrice} → ${finalPrice}`);
 
-      // 6. 获取访问令牌并下单
+      // 6. 获取访问令牌并下单 - 使用统一认证服务
       let accessToken: string | undefined;
       if (!useMockMode) {
-        const tokenInfo = this.deribitAuth.getTokenInfo(accountName);
-        if (!tokenInfo) {
+        const authToken = await getAuthenticationService().ensureAuthenticated(accountName);
+        if (!authToken) {
           throw new Error(`Failed to get access token for account: ${accountName}`);
         }
-        accessToken = tokenInfo.accessToken;
+        accessToken = authToken.accessToken;
       }
 
       const orderResult = useMockMode

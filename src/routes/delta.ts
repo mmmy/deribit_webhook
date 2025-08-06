@@ -9,6 +9,7 @@ import {
 } from '../services';
 import { DeribitPrivateAPI, createAuthInfo, getConfigByEnvironment } from '../api';
 import { validateAccountFromParams } from '../middleware/account-validation';
+import { getAuthenticationService } from '../services/authentication-service';
 
 const router = Router();
 
@@ -133,19 +134,18 @@ router.get('/api/delta/:accountId/live-data', validateAccountFromParams('account
       console.log(`🔗 Using real Deribit API for ${accountId}`);
       try {
         console.log(`🔐 Authenticating account: ${accountId}`);
-        const deribitAuth = new DeribitAuth();
-        await deribitAuth.authenticate(accountId);
-        const tokenInfo = deribitAuth.getTokenInfo(accountId);
-
-        if (!tokenInfo) {
-          throw new Error('Authentication failed - no token info');
+        // 使用统一认证服务
+        const authResult = await getAuthenticationService().authenticate(accountId);
+        
+        if (!authResult.success || !authResult.token) {
+          throw new Error(authResult.error || 'Authentication failed - no token info');
         }
 
         console.log(`✅ Authentication successful for ${accountId}`);
 
         const isTestEnv = process.env.USE_TEST_ENVIRONMENT === 'true';
         const apiConfig = getConfigByEnvironment(isTestEnv);
-        const authInfo = createAuthInfo(tokenInfo.accessToken);
+        const authInfo = createAuthInfo(authResult.token.accessToken);
 
         console.log(`🌐 Using ${isTestEnv ? 'TEST' : 'PRODUCTION'} environment: ${apiConfig.baseUrl}`);
 

@@ -6,11 +6,12 @@ import {
   WebhookSignalPayload 
 } from '../services';
 import { getConfigLoader, getOptionTradingService } from '../core';
+import { validateAccountFromBody } from '../middleware/account-validation';
 
 const router = Router();
 
 // TradingView Webhook Signal
-router.post('/webhook/signal', async (req, res) => {
+router.post('/webhook/signal', validateAccountFromBody('accountName'), async (req, res) => {
   const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
   try {
@@ -41,18 +42,9 @@ router.post('/webhook/signal', async (req, res) => {
       } as WebhookResponse);
     }
 
-    // 3. Validate account
-    const configLoader = getConfigLoader();
-    const account = configLoader.getAccountByName(payload.accountName);
-    if (!account) {
-      return res.status(404).json({
-        success: false,
-        message: `Account not found: ${payload.accountName}`,
-        timestamp: new Date().toISOString(),
-        requestId
-      } as WebhookResponse);
-    }
-
+    // 3. Account validation is now handled by middleware
+    // req.validatedAccount contains the validated account
+    
     // 4. Process trading signal
     console.log(`🔄 [${requestId}] Processing signal for account: ${payload.accountName}`);
     const optionTradingService = getOptionTradingService();

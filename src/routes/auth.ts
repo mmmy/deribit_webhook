@@ -1,29 +1,23 @@
 import { Router } from 'express';
 import { ConfigLoader, DeribitAuth, MockDeribitClient } from '../services';
+import { validateAccountFromQuery } from '../middleware/account-validation';
 
 const router = Router();
 
 // Authentication test endpoint
-router.get('/api/auth/test', async (req, res) => {
+router.get('/api/auth/test', validateAccountFromQuery('account'), async (req, res) => {
   try {
     const accountName = req.query.account as string || 'account_1';
-    const configLoader = ConfigLoader.getInstance();
-    const account = configLoader.getAccountByName(accountName);
-
-    if (!account) {
-      return res.status(404).json({
-        success: false,
-        message: `Account not found: ${accountName}`,
-        timestamp: new Date().toISOString()
-      });
-    }
+    
+    // Account validation is now handled by middleware
+    // req.validatedAccount contains the validated account
 
     const useMockMode = process.env.USE_MOCK_MODE === 'true';
 
     if (useMockMode) {
       // Use mock client
       const mockClient = new MockDeribitClient();
-      const authResult = await mockClient.authenticate(account);
+      const authResult = await mockClient.authenticate(req.validatedAccount!);
       
       res.json({
         success: true,

@@ -2,6 +2,7 @@ import axios, { AxiosResponse } from 'axios';
 import { ConfigLoader } from '../config';
 import { ApiKeyConfig, AuthResponse, AuthToken, DeribitAuthRequestParams, DeribitError } from '../types';
 import { DeribitPublicAPI, getConfigByEnvironment } from '../api';
+import { accountValidationService } from '../middleware/account-validation';
 
 export class DeribitAuth {
   private publicAPI: DeribitPublicAPI;
@@ -21,14 +22,8 @@ export class DeribitAuth {
    * Authenticate with Deribit API using OAuth 2.0 client credentials flow
    */
   public async authenticate(accountName: string): Promise<AuthToken> {
-    const account = this.configLoader.getAccountByName(accountName);
-    if (!account) {
-      throw new Error(`Account not found: ${accountName}`);
-    }
-
-    if (!account.enabled) {
-      throw new Error(`Account is disabled: ${accountName}`);
-    }
+    // 使用统一的账户验证服务
+    const account = accountValidationService.validateAccount(accountName);
 
     // Check if we have a valid cached token
     const cachedToken = this.tokens.get(accountName);
@@ -112,10 +107,8 @@ export class DeribitAuth {
    * Refresh an access token using refresh token
    */
   public async refreshToken(accountName: string): Promise<AuthToken> {
-    const account = this.configLoader.getAccountByName(accountName);
-    if (!account) {
-      throw new Error(`Account not found: ${accountName}`);
-    }
+    // 使用统一的账户验证服务
+    const account = accountValidationService.validateAccount(accountName);
 
     const cachedToken = this.tokens.get(accountName);
     if (!cachedToken || !cachedToken.refreshToken) {

@@ -7,8 +7,9 @@ import {
   OptionTradingService 
 } from '../services';
 import { DeribitPrivateAPI, createAuthInfo, getConfigByEnvironment } from '../api';
-import { getConfigLoader, getDeribitClient, getMockDeribitClient, getDeribitAuth, getOptionTradingService } from '../core';
+import { getConfigLoader, getDeribitClient, getMockDeribitClient, getDeribitAuth, getOptionTradingService, getClientFactory } from '../core';
 import { validateAccountFromParams } from '../middleware/account-validation';
+import { getUnifiedClient } from '../factory/client-factory';
 
 const router = Router();
 
@@ -17,35 +18,20 @@ router.get('/api/instruments', async (req, res) => {
   try {
     const currency = req.query.currency as string || 'BTC';
     const kind = req.query.kind as string || 'option';
-    const useMockMode = process.env.USE_MOCK_MODE === 'true';
-
-    if (useMockMode) {
-      const mockClient = getMockDeribitClient();
-      const instruments = await mockClient.getInstruments(currency, kind);
-      
-      res.json({
-        success: true,
-        mockMode: true,
-        currency,
-        kind,
-        count: instruments.length,
-        instruments,
-        timestamp: new Date().toISOString()
-      });
-    } else {
-      const deribitClient = getDeribitClient();
-      const instruments = await deribitClient.getInstruments(currency, kind);
-      
-      res.json({
-        success: true,
-        mockMode: false,
-        currency,
-        kind,
-        count: instruments.length,
-        instruments,
-        timestamp: new Date().toISOString()
-      });
-    }
+    
+    // 使用统一客户端，自动处理Mock/Real模式
+    const client = getUnifiedClient();
+    const instruments = await client.getInstruments(currency, kind);
+    
+    res.json({
+      success: true,
+      mockMode: client.isMock,
+      currency,
+      kind,
+      count: instruments.length,
+      instruments,
+      timestamp: new Date().toISOString()
+    });
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -69,31 +55,17 @@ router.get('/api/instrument/:instrumentName', async (req, res) => {
       });
     }
 
-    const useMockMode = process.env.USE_MOCK_MODE === 'true';
-
-    if (useMockMode) {
-      const mockClient = getMockDeribitClient();
-      const instrument = await mockClient.getInstrument(instrumentName);
-      
-      res.json({
-        success: true,
-        mockMode: true,
-        instrumentName,
-        instrument,
-        timestamp: new Date().toISOString()
-      });
-    } else {
-      const deribitClient = getDeribitClient();
-      const instrument = await deribitClient.getInstrument(instrumentName);
-      
-      res.json({
-        success: true,
-        mockMode: false,
-        instrumentName,
-        instrument,
-        timestamp: new Date().toISOString()
-      });
-    }
+    // 使用统一客户端，自动处理Mock/Real模式
+    const client = getUnifiedClient();
+    const instrument = await client.getInstrument(instrumentName);
+    
+    res.json({
+      success: true,
+      mockMode: client.isMock,
+      instrumentName,
+      instrument,
+      timestamp: new Date().toISOString()
+    });
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -113,12 +85,12 @@ router.get('/api/account/:accountName/:currency', validateAccountFromParams('acc
     // Account validation is now handled by middleware
     // req.validatedAccount contains the validated account
 
-    const useMockMode = process.env.USE_MOCK_MODE === 'true';
+    // 使用统一客户端，自动处理Mock/Real模式
+    const client = getUnifiedClient();
 
-    if (useMockMode) {
+    if (client.isMock) {
       // Mock mode: return simulated data
-      const mockClient = getMockDeribitClient();
-      const summary = await mockClient.getAccountSummary(currencyUpper);
+      const summary = await client.getAccountSummary(currencyUpper);
       
       res.json({
         success: true,
@@ -255,16 +227,9 @@ router.get('/api/options/:currency/delta/:delta', async (req, res) => {
 
     console.log(`🎯 Finding option by delta: ${currency}, delta: ${deltaValue}, minExpiredDays: ${minExpiredDaysValue}, longSide: ${longSideValue}`);
 
-    const useMockMode = process.env.USE_MOCK_MODE === 'true';
-    let result;
-
-    if (useMockMode) {
-      const mockClient = getMockDeribitClient();
-      result = await mockClient.getInstrumentByDelta(currency.toUpperCase(), minExpiredDaysValue, deltaValue, longSideValue);
-    } else {
-      const deribitClient = getDeribitClient();
-      result = await deribitClient.getInstrumentByDelta(currency.toUpperCase(), minExpiredDaysValue, deltaValue, longSideValue);
-    }
+    // 使用统一客户端，自动处理Mock/Real模式
+    const client = getUnifiedClient();
+    const result = await client.getInstrumentByDelta(currency.toUpperCase(), minExpiredDaysValue, deltaValue, longSideValue);
 
     if (result) {
       res.json({

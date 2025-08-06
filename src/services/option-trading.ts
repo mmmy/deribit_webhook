@@ -14,6 +14,7 @@ import { placeOptionOrder as placeOptionOrderPure, PlaceOrderDependencies } from
 import { executePositionAdjustmentByTvId, executePositionCloseByTvId } from './position-adjustment';
 import { wechatNotification } from './wechat-notification';
 import { accountValidationService } from '../middleware/account-validation';
+import { getUnifiedClient, isMockMode } from '../factory/client-factory';
 
 
 export class OptionTradingService {
@@ -48,8 +49,7 @@ export class OptionTradingService {
       console.log(`✅ Account validation successful: ${account.name} (enabled: ${account.enabled})`);
 
       // 2. 验证认证 (在Mock模式下跳过真实认证)
-      const useMockMode = process.env.USE_MOCK_MODE === 'true';
-      if (!useMockMode) {
+      if (!isMockMode()) {
         await this.deribitAuth.authenticate(payload.accountName);
         console.log(`✅ Authentication successful for account: ${payload.accountName}`);
       } else {
@@ -205,8 +205,6 @@ export class OptionTradingService {
   private async executeOptionTrade(params: OptionTradingParams, payload: WebhookSignalPayload): Promise<OptionTradingResult> {
     console.log('🚀 Executing option trade:', params);
     
-    const useMockMode = process.env.USE_MOCK_MODE === 'true';
-    
     try {
       let instrumentName: string | undefined;
       
@@ -241,13 +239,9 @@ export class OptionTradingService {
 
         console.log(`🎯 Option selection: delta1=${delta1} → ${isCall ? 'call' : 'put'} option, action=${params.action} → ${actualDirection}`);
 
-        // 调用getInstrumentByDelta
-        let deltaResult;
-        if (useMockMode) {
-          deltaResult = await this.mockClient.getInstrumentByDelta(currency, payload.n, payload.delta1, isCall, underlying);
-        } else {
-          deltaResult = await this.deribitClient.getInstrumentByDelta(currency, payload.n, payload.delta1, isCall, underlying);
-        }
+        // 调用getInstrumentByDelta - 使用统一客户端
+        const client = getUnifiedClient();
+        const deltaResult = await client.getInstrumentByDelta(currency, payload.n, payload.delta1, isCall, underlying);
         
         if (deltaResult) {
           instrumentName = deltaResult.instrument.instrument_name;
@@ -255,7 +249,7 @@ export class OptionTradingService {
           
           // 执行开仓交易，使用实际交易方向
           const modifiedParams = { ...params, direction: actualDirection };
-          const orderResult = await this.placeOptionOrder(instrumentName, modifiedParams, useMockMode);
+          const orderResult = await this.placeOptionOrder(instrumentName!, modifiedParams, isMockMode());
           if (!orderResult.success) {
             return orderResult;
           }
@@ -398,7 +392,7 @@ export class OptionTradingService {
             params.accountName,
             params.tv_id,
             0.5, // 平仓50%
-            useMockMode
+            isMockMode()
           );
 
           // 发送止损结果通知到企业微信
@@ -427,7 +421,7 @@ export class OptionTradingService {
       // 返回交易结果
       return {
         success: true,
-        orderId: `${useMockMode ? 'mock' : 'real'}_order_${Date.now()}`,
+        orderId: `${isMockMode() ? 'mock' : 'real'}_order_${Date.now()}`,
         message: `Successfully executed ${params.action} ${params.direction} order for ${params.quantity} contracts`,
         instrumentName,
         executedQuantity: params.quantity,

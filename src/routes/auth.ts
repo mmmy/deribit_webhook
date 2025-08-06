@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { ConfigLoader, DeribitAuth, MockDeribitClient } from '../services';
 import { validateAccountFromQuery } from '../middleware/account-validation';
+import { getUnifiedClient } from '../factory/client-factory';
 
 const router = Router();
 
@@ -12,12 +13,12 @@ router.get('/api/auth/test', validateAccountFromQuery('account'), async (req, re
     // Account validation is now handled by middleware
     // req.validatedAccount contains the validated account
 
-    const useMockMode = process.env.USE_MOCK_MODE === 'true';
+    // 使用统一客户端，自动处理Mock/Real模式
+    const client = getUnifiedClient();
 
-    if (useMockMode) {
-      // Use mock client
-      const mockClient = new MockDeribitClient();
-      const authResult = await mockClient.authenticate(req.validatedAccount!);
+    if (client.isMock) {
+      // Use unified mock client
+      const authResult = await (client as any).mockClient.authenticate(req.validatedAccount!);
       
       res.json({
         success: true,

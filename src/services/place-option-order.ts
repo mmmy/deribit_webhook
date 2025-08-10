@@ -164,8 +164,8 @@ function calculateOrderParameters(
   if (params.qtyType === 'cash') {
     if (instrumentInfo.settlement_currency === 'USDC') {
       // USDC期权：qtyType=cash表示USDC价值，直接使用不需要换算
-      orderQuantity = params.quantity;
-      console.log(`💰 USDC Cash mode: using ${params.quantity} USDC directly as quantity`);
+      orderQuantity = params.quantity / entryPrice;
+      console.log(`💰 USDC Cash mode: converting $${params.quantity} to ${orderQuantity} contracts by dividing by entry price ${entryPrice}`);
     } else {
       // 传统期权：需要根据期权价格和指数价格换算
       orderQuantity = params.quantity / (entryPrice * optionDetails.index_price);

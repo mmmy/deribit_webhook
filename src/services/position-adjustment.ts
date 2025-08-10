@@ -43,21 +43,22 @@ export async function executePositionAdjustment(
   try {
     console.log(`🔄 [${requestId}] Starting position adjustment for ${currentPosition.instrument_name}`);
 
-    // 提取货币信息
-    const currency = currentPosition.instrument_name.split('-')[0]; // BTC, ETH, SOL
+    // 提取货币和标的资产信息
+    const { currency, underlying } = await parseInstrumentForOptions(currentPosition.instrument_name, deribitClient);
 
     // 1. 根据latestRecord.move_position_delta 获取新的期权工具
-    console.log(`📊 [${requestId}] Getting instrument by delta: currency=${currency}, delta=${deltaRecord.move_position_delta}`);
+    console.log(`📊 [${requestId}] Getting instrument by delta: currency=${currency}, underlying=${underlying}, delta=${deltaRecord.move_position_delta}`);
 
     // 确定方向：如果move_position_delta为正，选择看涨期权；为负，选择看跌期权
     const isCall = deltaRecord.move_position_delta > 0;
-
-    // 获取新的期权工具
+    
+    // 获取新的期权工具 - 现在使用正确的underlying参数
     const deltaResult = await deribitClient.getInstrumentByDelta(
       currency,
       deltaRecord.min_expire_days || 7, // 最小到期天数，默认7天
       Math.abs(deltaRecord.move_position_delta), // 目标delta值
-      isCall
+      isCall,
+      underlying // 传入正确的underlying参数
     );
 
     if (!deltaResult || !deltaResult.instrument) {
@@ -608,5 +609,56 @@ export async function executePositionAdjustmentByTvId(
       success: false,
       message: `Position adjustment failed: ${error instanceof Error ? error.message : 'Unknown error'}`
     };
+  }
+}
+
+/**
+ * 从期权合约名称中提取currency和underlying参数
+ * 支持币本位期权 (BTC-XXX) 和USDC期权 (SOL_USDC-XXX)
+ * @param instrumentName 期权合约名称
+ * @param deribitClient DeribitClient实例，用于验证解析结果
+ * @returns Promise<{ currency: string; underlying: string }> 解析结果
+ */
+export async function parseInstrumentForOptions(
+  instrumentName: string,
+  deribitClient: DeribitClient
+): Promise<{ currency: string; underlying: string }> {
+  const upperInstrument = instrumentName.toUpperCase();
+
+  let parsed: { currency: string; underlying: string };
+
+  // 检查是否为USDC期权格式: SOL_USDC-DDMMMYY-STRIKE-C/P
+  if (upperInstrument.includes('_USDC-')) {
+    const underlying = upperInstrument.split('_USDC-')[0];
+    parsed = {
+      currency: 'USDC',
+      underlying: underlying
+    };
+  } else {
+    // 币本位期权格式: BTC-DDMMMYY-STRIKE-C/P 或 ETH-DDMMMYY-STRIKE-C/P
+    const parts = upperInstrument.split('-');
+    if (parts.length >= 4) {
+      const underlying = parts[0];
+      parsed = {
+        currency: underlying,
+        underlying: underlying
+      };
+    } else {
+      throw new Error(`Invalid instrument name format: ${instrumentName}`);
+    }
+  }
+
+  // 调用Deribit的getInstrument接口验证解析结果
+  try {
+    const instrumentInfo = await deribitClient.getInstrument(instrumentName);
+    if (!instrumentInfo) {
+      throw new Error(`Failed to validate instrument: ${instrumentName} - instrument not found`);
+    }
+    
+    console.log(`✅ Instrument validated: ${instrumentName} → currency: ${parsed.currency}, underlying: ${parsed.underlying}`);
+    return parsed;
+  } catch (error) {
+    console.error(`❌ Failed to validate instrument ${instrumentName}:`, error);
+    throw new Error(`Failed to validate instrument ${instrumentName}: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }

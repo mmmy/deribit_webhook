@@ -27,6 +27,8 @@ export interface OrderNotificationInfo {
   averagePrice: number;
   success: boolean;
   extraMsg?: string;
+  bestBidPrice?: number;
+  bestAskPrice?: number;
 }
 
 /**
@@ -203,12 +205,12 @@ export async function sendOrderNotification(
 👤 账户: ${accountName}
 🎯 合约: ${orderInfo.instrumentName}
 📊 操作: ${directionText} ${orderInfo.quantity} 张
-💰 价格: $${orderInfo.price.toFixed(4)}
+💰 价格: $${orderInfo.price}${orderInfo.bestBidPrice !== undefined && orderInfo.bestAskPrice !== undefined ? ` | 买1: $${orderInfo.bestBidPrice} 卖1: $${orderInfo.bestAskPrice}` : ''}
 🆔 订单ID: ${orderInfo.orderId}
 📈 状态: ${orderStateText}
 ${orderInfo.extraMsg ? `ℹ️ ${orderInfo.extraMsg}` : ''}
 ${orderInfo.filledAmount > 0 ? `✅ 成交数量: ${orderInfo.filledAmount} 张` : ''}
-${orderInfo.averagePrice > 0 ? `💵 成交均价: $${orderInfo.averagePrice.toFixed(4)}` : ''}
+${orderInfo.averagePrice > 0 ? `💵 成交均价: $${orderInfo.averagePrice}` : ''}
 ⏰ 时间: ${new Date().toLocaleString('zh-CN')}`;
 
     await bot.sendMarkdown(notificationContent);

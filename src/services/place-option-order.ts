@@ -138,7 +138,7 @@ async function handleRealOrder(
   const spreadRatioThreshold = parseFloat(process.env.SPREAD_RATIO_THRESHOLD || '0.15');
   
   if (isSpreadTooWide(optionDetails.best_bid_price, optionDetails.best_ask_price, spreadRatioThreshold)) {
-    return await handleWideSpreadOrder(instrumentName, params, finalQuantity, finalPrice, spreadRatio, tokenInfo.accessToken, dependencies);
+    return await handleWideSpreadOrder(instrumentName, params, finalQuantity, finalPrice, spreadRatio, optionDetails, tokenInfo.accessToken, dependencies);
   } else {
     return await handleNarrowSpreadOrder(instrumentName, params, finalQuantity, finalPrice, spreadRatio, instrumentInfo, optionDetails, tokenInfo.accessToken, dependencies);
   }
@@ -204,6 +204,7 @@ async function handleWideSpreadOrder(
   finalQuantity: number,
   finalPrice: number,
   spreadRatio: number,
+  optionDetails: any,
   accessToken: string,
   dependencies: PlaceOrderDependencies
 ): Promise<OptionTradingResult> {
@@ -234,7 +235,9 @@ async function handleWideSpreadOrder(
     filledAmount: orderResult.order?.filled_amount || 0,
     averagePrice: orderResult.order?.average_price || 0,
     success: true,
-    extraMsg: extraMsg
+    extraMsg: extraMsg,
+    bestBidPrice: optionDetails.best_bid_price,
+    bestAskPrice: optionDetails.best_ask_price
   };
 
   await sendOrderNotificationPure(params.accountName, orderInfo, dependencies.orderSupportDependencies);
@@ -323,7 +326,9 @@ async function handleNarrowSpreadOrder(
       filledAmount: strategyResult.executedQuantity || finalQuantity,
       averagePrice: strategyResult.averagePrice || finalPrice,
       success: true,
-      extraMsg: extraMsg
+      extraMsg: extraMsg,
+      bestBidPrice: optionDetails.best_bid_price,
+      bestAskPrice: optionDetails.best_ask_price
     };
 
     await sendOrderNotificationPure(params.accountName, orderInfo, dependencies.orderSupportDependencies);
@@ -355,7 +360,9 @@ async function handleNarrowSpreadOrder(
       filledAmount: 0,
       averagePrice: 0,
       success: false,
-      extraMsg: extraMsg
+      extraMsg: extraMsg,
+      bestBidPrice: optionDetails.best_bid_price,
+      bestAskPrice: optionDetails.best_ask_price
     };
 
     await sendOrderNotificationPure(params.accountName, orderInfo, dependencies.orderSupportDependencies);
@@ -405,7 +412,9 @@ async function handleOrderError(
     filledAmount: 0,
     averagePrice: 0,
     success: false,
-    extraMsg: `错误: ${errorMsg}`
+    extraMsg: `错误: ${errorMsg}`,
+    bestBidPrice: undefined,
+    bestAskPrice: undefined
   };
 
   await sendOrderNotificationPure(params.accountName, orderInfo, dependencies.orderSupportDependencies);

@@ -179,7 +179,7 @@ export class DeribitClient {
     minExpiredDays: number,
     delta: number,
     longSide: boolean,
-    underlyingAsset?: string
+    underlyingAsset: string
   ): Promise<DeltaFilterResult | null> {
     try {
       console.log(

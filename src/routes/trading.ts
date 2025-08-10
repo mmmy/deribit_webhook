@@ -185,7 +185,7 @@ router.get('/api/options/:currency/delta/:delta', async (req, res) => {
 
     // 使用统一客户端，自动处理Mock/Real模式
     const client = getUnifiedClient();
-    const result = await client.getInstrumentByDelta(currency.toUpperCase(), minExpiredDaysValue, deltaValue, longSideValue);
+    const result = await client.getInstrumentByDelta(currency.toUpperCase(), minExpiredDaysValue, deltaValue, longSideValue, currency.toUpperCase());
 
     if (result) {
       return ApiResponse.ok(res, {

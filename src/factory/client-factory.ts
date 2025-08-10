@@ -5,9 +5,9 @@
  * 统一管理Mock和真实客户端的创建与选择，消除Mock模式判断逻辑重复
  */
 
+import { DeribitAuth } from '../services/auth';
 import { DeribitClient } from '../services/deribit-client';
 import { MockDeribitClient } from '../services/mock-deribit';
-import { DeribitAuth } from '../services/auth';
 
 /**
  * 运行模式枚举
@@ -33,7 +33,7 @@ export interface IUnifiedClient {
   // 工具相关
   getInstruments(currency: string, kind?: string): Promise<any[]>;
   getInstrument(instrumentName: string): Promise<any>;
-  getInstrumentByDelta(currency: string, minExpiredDays: number, targetDelta: number, isCall: boolean, underlying?: string): Promise<any>;
+  getInstrumentByDelta(currency: string, minExpiredDays: number, targetDelta: number, isCall: boolean, underlying: string): Promise<any>;
   
   // 账户相关
   getAccountSummary(currency: string): Promise<any>;
@@ -255,7 +255,7 @@ class UnifiedRealClient implements IUnifiedClient {
     return this.realClient.getInstrument(instrumentName);
   }
 
-  async getInstrumentByDelta(currency: string, minExpiredDays: number, targetDelta: number, isCall: boolean, underlying?: string): Promise<any> {
+  async getInstrumentByDelta(currency: string, minExpiredDays: number, targetDelta: number, isCall: boolean, underlying: string): Promise<any> {
     return this.realClient.getInstrumentByDelta(currency, minExpiredDays, targetDelta, isCall, underlying);
   }
 

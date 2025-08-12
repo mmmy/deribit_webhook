@@ -149,6 +149,23 @@ export interface OptionTradingResult {
   error?: string;
 }
 
+// 仓位调整结果接口
+export interface PositionAdjustmentResult {
+  success: boolean;
+  message?: string;
+  reason?: string;
+  error?: string;
+  oldInstrument?: string;
+  newInstrument?: string;
+  adjustmentSummary?: {
+    oldSize: number;
+    oldDelta: number;
+    newDirection: 'buy' | 'sell';
+    newQuantity: number;
+    targetDelta: number;
+  };
+}
+
 // Deribit仓位信息接口
 export interface DeribitPosition {
   instrument_name: string;           // 工具名称

@@ -6,8 +6,9 @@
 import { ConfigLoader } from '../config';
 import { DeltaManager } from '../database/delta-manager';
 import { DeltaRecord } from '../database/types';
-import { DeribitPosition, OptionTradingParams } from '../types';
+import { DeribitPosition, OptionTradingParams, PositionAdjustmentResult } from '../types';
 import { correctOrderAmount, correctSmartPrice } from '../utils/price-correction';
+import { calculateSpreadRatio, formatSpreadRatioAsPercentage } from '../utils/spread-calculation';
 import { DeribitAuth } from './auth';
 import { DeribitClient } from './deribit-client';
 import { MockDeribitClient } from './mock-deribit';
@@ -36,7 +37,7 @@ export async function executePositionAdjustment(
     mockClient: MockDeribitClient;
     configLoader: ConfigLoader;
   }
-) {
+): Promise<PositionAdjustmentResult> {
   const { requestId, accountName, currentPosition, deltaRecord, accessToken } = params;
   const { deribitClient, deltaManager, deribitAuth, mockClient, configLoader } = services;
 
@@ -51,6 +52,34 @@ export async function executePositionAdjustment(
 
     // 确定方向：如果move_position_delta为正，选择看涨期权；为负，选择看跌期权
     const isCall = deltaRecord.move_position_delta > 0;
+    const spreadRatioThreshold = parseFloat(process.env.SPREAD_RATIO_THRESHOLD || '0.15');
+    
+    // 检查当前仓位的盘口价差是否超过阈值
+    const currentOptionDetails = await deribitClient.getOptionDetails(currentPosition.instrument_name);
+    if (!currentOptionDetails) {
+      return {
+        success: false,
+        message: `Failed to get option details for current position: ${currentPosition.instrument_name}`
+      };
+    }
+
+    const currentSpreadRatio = calculateSpreadRatio(
+      currentOptionDetails.best_bid_price, 
+      currentOptionDetails.best_ask_price
+    );
+    
+    if (currentSpreadRatio > spreadRatioThreshold) {
+      const currentSpreadFormatted = formatSpreadRatioAsPercentage(currentSpreadRatio);
+      const thresholdFormatted = formatSpreadRatioAsPercentage(spreadRatioThreshold);
+      
+      console.log(`❌ [${requestId}] Current position spread too wide for ${currentPosition.instrument_name}: ${currentSpreadFormatted} > ${thresholdFormatted}`);
+      console.log(`📊 [${requestId}] Current Bid: ${currentOptionDetails.best_bid_price}, Ask: ${currentOptionDetails.best_ask_price}`);
+      
+      return {
+        success: false,
+        message: `平仓价差过大Price spread too wide for current position: ${currentSpreadFormatted} exceeds threshold ${thresholdFormatted}`
+      };
+    }
     
     // 获取新的期权工具 - 现在使用正确的underlying参数
     const deltaResult = await deribitClient.getInstrumentByDelta(
@@ -63,6 +92,20 @@ export async function executePositionAdjustment(
 
     if (!deltaResult || !deltaResult.instrument) {
       throw new Error(`Failed to get instrument by delta: No suitable instrument found`);
+    }
+
+    // 检查盘口价差是否超过阈值
+    if (deltaResult.spreadRatio > spreadRatioThreshold) {
+      const spreadRatioFormatted = formatSpreadRatioAsPercentage(deltaResult.spreadRatio);
+      const thresholdFormatted = formatSpreadRatioAsPercentage(spreadRatioThreshold);
+      
+      console.log(`❌ [${requestId}] Spread ratio too wide for ${deltaResult.instrument.instrument_name}: ${spreadRatioFormatted} > ${thresholdFormatted}`);
+      console.log(`📊 [${requestId}] Bid: ${deltaResult.details.best_bid_price}, Ask: ${deltaResult.details.best_ask_price}`);
+      
+      return {
+        success: false,
+        message: `换仓价差过大Price spread too wide: ${spreadRatioFormatted} exceeds threshold ${thresholdFormatted}`
+      };
     }
 
     console.log(`🎯 [${requestId}] Selected new instrument: ${deltaResult.instrument.instrument_name}`);
@@ -153,21 +196,11 @@ export async function executePositionAdjustment(
     // 返回成功结果
     return {
       success: true,
-      closeResult: closeResult,
-      newOrderResult: {
-        success: newOrderResult.success,
-        orderId: newOrderResult.orderId,
-        message: newOrderResult.message,
-        instrumentName: newOrderResult.instrumentName,
-        executedQuantity: newOrderResult.executedQuantity,
-        executedPrice: newOrderResult.executedPrice
-      },
-      deltaRecordDeleted: deleteSuccess,
       oldInstrument: currentPosition.instrument_name,
       newInstrument: deltaResult.instrument.instrument_name,
       adjustmentSummary: {
         oldSize: currentPosition.size,
-        oldDelta: currentPosition.delta,
+        oldDelta: currentPosition.delta || 0,
         newDirection: newDirection,
         newQuantity: newQuantity,
         targetDelta: deltaRecord.move_position_delta
@@ -179,8 +212,7 @@ export async function executePositionAdjustment(
     return {
       success: false,
       reason: 'Exception during adjustment',
-      error: error instanceof Error ? error.message : 'Unknown error',
-      deltaRecord: deltaRecord
+      error: error instanceof Error ? error.message : 'Unknown error'
     };
   }
 }
@@ -594,11 +626,28 @@ export async function executePositionAdjustmentByTvId(
 
     // 6. 汇总结果
     const successCount = adjustmentResults.filter(r => r.success).length;
+    const failureCount = adjustmentResults.filter(r => !r.success).length;
     const totalCount = adjustmentResults.length;
+
+    // 生成详细的结果消息
+    let message = `Position adjustment completed: ${successCount}/${totalCount} successful`;
+    
+    if (failureCount > 0) {
+      const failures = adjustmentResults.filter(r => !r.success);
+      const failureDetails = failures.map(failure => {
+        if (failure.reason) {
+          return `${failure.reason}: ${failure.error || failure.message || 'Unknown error'}`;
+        } else {
+          return failure.message || 'Unknown error';
+        }
+      }).join('; ');
+      
+      message += `. Failures (${failureCount}): ${failureDetails}`;
+    }
 
     return {
       success: successCount > 0,
-      message: `Position adjustment completed: ${successCount}/${totalCount} successful`,
+      message: message,
       orderId: `tv_adjustment_${tvId}`,
       executedQuantity: successCount
     };

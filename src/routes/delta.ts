@@ -1,14 +1,13 @@
 import { Router } from 'express';
 import path from 'path';
-import { 
-  ConfigLoader, 
-  DeltaManager, 
-  CreateDeltaRecordInput, 
-  DeltaRecordType,
-  DeribitAuth
-} from '../services';
 import { DeribitPrivateAPI, createAuthInfo, getConfigByEnvironment } from '../api';
 import { validateAccountFromParams } from '../middleware/account-validation';
+import {
+    ConfigLoader,
+    CreateDeltaRecordInput,
+    DeltaManager,
+    DeltaRecordType
+} from '../services';
 import { getAuthenticationService } from '../services/authentication-service';
 import { ApiResponse } from '../utils/response-formatter';
 
@@ -230,7 +229,7 @@ router.get('/api/delta/:accountId/live-data', validateAccountFromParams('account
 router.post('/api/delta/:accountId', validateAccountFromParams('accountId'), async (req, res) => {
   try {
     const { accountId } = req.params;
-    const { instrument_name, delta, target_delta, move_position_delta, min_expire_days, tv_id, record_type, order_id } = req.body;
+    const { instrument_name, delta, target_delta, move_position_delta, min_expire_days, tv_id, record_type, order_id, action } = req.body;
     const configLoader = ConfigLoader.getInstance();
     const deltaManager = DeltaManager.getInstance();
 
@@ -260,6 +259,7 @@ router.post('/api/delta/:accountId', validateAccountFromParams('accountId'), asy
       move_position_delta: parseFloat(finalMovePositionDelta),
       min_expire_days: finalMinExpireDays !== null ? parseInt(finalMinExpireDays) : null,
       tv_id: tv_id ? parseInt(tv_id) : null,
+      action: action || null,
       record_type: record_type as DeltaRecordType,
       order_id: order_id || undefined
     };

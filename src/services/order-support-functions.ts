@@ -3,11 +3,11 @@
  * 将原来的 handleNonImmediateOrder, recordPositionInfoToDatabase, sendOrderNotification 重构为纯函数
  */
 
-import { OptionTradingParams } from '../types';
-import type { DetailedPositionInfo } from '../types/position-info';
+import { ConfigLoader } from '../config';
 import { DeltaManager } from '../database/delta-manager';
 import { DeltaRecordType } from '../database/types';
-import { ConfigLoader } from '../config';
+import { OptionTradingParams } from '../types';
+import type { DetailedPositionInfo } from '../types/position-info';
 
 // 依赖注入接口
 export interface OrderSupportDependencies {
@@ -75,6 +75,7 @@ export async function handleNonImmediateOrder(
         min_expire_days: params.n || null, // 使用n参数作为最小到期天数，如果没有则为null
         order_id: recordType === DeltaRecordType.ORDER ? (orderResult.order?.order_id || '') : null,
         tv_id: params.tv_id || null, // 从webhook payload中获取TradingView信号ID
+        action: params.action, // 记录交易动作
         record_type: recordType
       };
 
@@ -147,6 +148,7 @@ export async function recordPositionInfoToDatabase(
       move_position_delta: Math.max(-1, Math.min(1, movePositionDelta)), // 确保在[-1, 1]范围内
       min_expire_days: params.n || null, // 使用n参数作为最小到期天数，如果没有则为null
       tv_id: params.tv_id || null, // 从webhook payload中获取TradingView信号ID
+      action: params.action, // 记录交易动作
       record_type: DeltaRecordType.POSITION // 策略完成后记录为仓位
     };
 

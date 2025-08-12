@@ -66,6 +66,7 @@ export class DeltaManager {
         move_position_delta REAL NOT NULL DEFAULT 0 CHECK (move_position_delta >= -1 AND move_position_delta <= 1),
         min_expire_days INTEGER CHECK (min_expire_days IS NULL OR min_expire_days > 0),
         tv_id INTEGER,
+        action TEXT CHECK (action IN ('open_long', 'open_short', 'close_long', 'close_short', 'reduce_long', 'reduce_short', 'stop_long', 'stop_short')),
         record_type TEXT NOT NULL CHECK (record_type IN ('position', 'order')),
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -77,6 +78,7 @@ export class DeltaManager {
       'CREATE INDEX IF NOT EXISTS idx_instrument_name ON delta_records(instrument_name)',
       'CREATE INDEX IF NOT EXISTS idx_order_id ON delta_records(order_id)',
       'CREATE INDEX IF NOT EXISTS idx_tv_id ON delta_records(tv_id)',
+      'CREATE INDEX IF NOT EXISTS idx_action ON delta_records(action)',
       'CREATE INDEX IF NOT EXISTS idx_record_type ON delta_records(record_type)',
       'CREATE INDEX IF NOT EXISTS idx_account_instrument ON delta_records(account_id, instrument_name)',
       // 唯一约束：同一账户的同一合约只能有一个仓位记录
@@ -110,8 +112,8 @@ export class DeltaManager {
    */
   public createRecord(input: CreateDeltaRecordInput): DeltaRecord {
     const insertSQL = `
-      INSERT INTO delta_records (account_id, instrument_name, order_id, target_delta, move_position_delta, min_expire_days, tv_id, record_type)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO delta_records (account_id, instrument_name, order_id, target_delta, move_position_delta, min_expire_days, tv_id, action, record_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     try {
@@ -124,6 +126,7 @@ export class DeltaManager {
         input.move_position_delta,
         input.min_expire_days,
         input.tv_id,
+        input.action || null,
         input.record_type
       );
 
@@ -180,6 +183,11 @@ export class DeltaManager {
       params.push(query.tv_id);
     }
 
+    if (query.action) {
+      selectSQL += ' AND action = ?';
+      params.push(query.action);
+    }
+
     if (query.record_type) {
       selectSQL += ' AND record_type = ?';
       params.push(query.record_type);
@@ -221,6 +229,11 @@ export class DeltaManager {
     if (input.tv_id !== undefined) {
       fields.push('tv_id = ?');
       params.push(input.tv_id);
+    }
+
+    if (input.action !== undefined) {
+      fields.push('action = ?');
+      params.push(input.action);
     }
 
     if (fields.length === 0) {
@@ -415,7 +428,8 @@ export class DeltaManager {
           target_delta: input.target_delta,
           move_position_delta: input.move_position_delta,
           min_expire_days: input.min_expire_days,
-          tv_id: input.tv_id
+          tv_id: input.tv_id,
+          action: input.action
         });
         if (!updated) {
           throw new Error('更新现有仓位记录失败');

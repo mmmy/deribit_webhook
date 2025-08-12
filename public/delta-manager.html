@@ -265,6 +265,25 @@
             font-weight: bold;
         }
 
+        .action-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .action-buy {
+            background: #27ae60;
+            color: white;
+        }
+
+        .action-sell {
+            background: #e74c3c;
+            color: white;
+        }
+
         .loading {
             text-align: center;
             padding: 40px;
@@ -625,6 +644,7 @@
                                     <th>状态</th>
                                     <th>订单ID</th>
                                     <th>合约名称</th>
+                                    <th>交易动作</th>
                                     <th>目标Delta</th>
                                     <th>移仓Delta</th>
                                     <th>最小到期天数</th>
@@ -1298,6 +1318,7 @@
                     <td>${statusHtml}</td>
                     <td>${record.order_id || '-'}</td>
                     <td>${record.instrument_name}</td>
+                    <td><span class="action-badge ${record.action === 'buy' ? 'action-buy' : 'action-sell'}">${record.action || '-'}</span></td>
                     <td class="${record.target_delta >= 0 ? 'delta-positive' : 'delta-negative'}">${record.target_delta.toFixed(4)}</td>
                     <td class="${(record.move_position_delta || 0) >= 0 ? 'delta-positive' : 'delta-negative'}">${(record.move_position_delta || 0).toFixed(4)}</td>
                     <td>${record.min_expire_days || '-'}</td>
@@ -1315,7 +1336,7 @@
 
             if (orderRecords.length === 0) {
                 const row = document.createElement('tr');
-                row.innerHTML = '<td colspan="9" style="text-align: center; color: #7f8c8d;">暂无订单记录</td>';
+                row.innerHTML = '<td colspan="11" style="text-align: center; color: #7f8c8d;">暂无订单记录</td>';
                 tbody.appendChild(row);
             }
         }

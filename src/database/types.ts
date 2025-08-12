@@ -2,6 +2,8 @@
  * 数据库相关类型定义
  */
 
+import { OptionTradingAction } from '../types';
+
 // Delta记录类型枚举
 export enum DeltaRecordType {
   POSITION = 'position',    // 仓位
@@ -18,6 +20,7 @@ export interface DeltaRecord {
   move_position_delta: number;    // 移仓Delta值 (-1 到 1)
   min_expire_days: number | null; // 最小到期天数 (大于0的整数，可为null)
   tv_id: number | null;           // TradingView信号ID (可选)
+  action: OptionTradingAction | null; // 交易动作 (可选)
   record_type: DeltaRecordType;   // 记录类型
   created_at?: string;            // 创建时间
   updated_at?: string;            // 更新时间
@@ -32,6 +35,7 @@ export interface CreateDeltaRecordInput {
   move_position_delta: number;
   min_expire_days: number | null;
   tv_id: number | null;
+  action?: OptionTradingAction | null;
   record_type: DeltaRecordType;
 }
 
@@ -42,6 +46,7 @@ export interface UpdateDeltaRecordInput {
   min_expire_days?: number | null;
   order_id?: string;
   tv_id?: number | null;
+  action?: OptionTradingAction | null;
 }
 
 // 查询条件接口
@@ -50,6 +55,7 @@ export interface DeltaRecordQuery {
   instrument_name?: string;
   order_id?: string;
   tv_id?: number;
+  action?: OptionTradingAction;
   record_type?: DeltaRecordType;
 }
 

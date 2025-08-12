@@ -408,11 +408,11 @@
                 <div class="form-row">
                     <div class="form-group">
                         <label for="startTime">开始时间</label>
-                        <input type="datetime-local" id="startTime" name="startTime">
+                        <input type="datetime-local" id="startTime" name="startTime" step="1">
                     </div>
                     <div class="form-group">
                         <label for="endTime">结束时间</label>
-                        <input type="datetime-local" id="endTime" name="endTime">
+                        <input type="datetime-local" id="endTime" name="endTime" step="1">
                     </div>
                     <div class="form-group">
                         <label for="maxRecords">最大条数</label>
@@ -533,15 +533,16 @@
             document.getElementById('endTime').value = formatDateTimeLocal(now);
         }
 
-        // 格式化日期时间为本地格式
+        // 格式化日期时间为本地格式（精确到秒）
         function formatDateTimeLocal(date) {
             const year = date.getFullYear();
             const month = String(date.getMonth() + 1).padStart(2, '0');
             const day = String(date.getDate()).padStart(2, '0');
             const hours = String(date.getHours()).padStart(2, '0');
             const minutes = String(date.getMinutes()).padStart(2, '0');
+            const seconds = String(date.getSeconds()).padStart(2, '0');
 
-            return `${year}-${month}-${day}T${hours}:${minutes}`;
+            return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
         }
 
         // 查询日志
@@ -685,10 +686,12 @@
             document.getElementById('resultCount').textContent = '等待查询...';
         }
 
-        // 格式化时间戳
+        // 格式化时间戳（包含毫秒）
         function formatTimestamp(timestamp) {
             const date = new Date(timestamp);
-            return date.toLocaleString('zh-CN', {
+
+            // 获取基本的日期时间格式
+            const baseFormat = date.toLocaleString('zh-CN', {
                 year: 'numeric',
                 month: '2-digit',
                 day: '2-digit',
@@ -696,6 +699,10 @@
                 minute: '2-digit',
                 second: '2-digit'
             });
+
+            // 添加毫秒
+            const milliseconds = date.getMilliseconds().toString().padStart(3, '0');
+            return `${baseFormat}.${milliseconds}`;
         }
 
         // HTML转义

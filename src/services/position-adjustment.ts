@@ -53,34 +53,7 @@ export async function executePositionAdjustment(
     // 确定方向：如果move_position_delta为正，选择看涨期权；为负，选择看跌期权
     const isCall = deltaRecord.move_position_delta > 0;
     const spreadRatioThreshold = parseFloat(process.env.SPREAD_RATIO_THRESHOLD || '0.15');
-    
-    // 检查当前仓位的盘口价差是否超过阈值
-    const currentOptionDetails = await deribitClient.getOptionDetails(currentPosition.instrument_name);
-    if (!currentOptionDetails) {
-      return {
-        success: false,
-        message: `Failed to get option details for current position: ${currentPosition.instrument_name}`
-      };
-    }
 
-    const currentSpreadRatio = calculateSpreadRatio(
-      currentOptionDetails.best_bid_price, 
-      currentOptionDetails.best_ask_price
-    );
-    
-    if (currentSpreadRatio > spreadRatioThreshold) {
-      const currentSpreadFormatted = formatSpreadRatioAsPercentage(currentSpreadRatio);
-      const thresholdFormatted = formatSpreadRatioAsPercentage(spreadRatioThreshold);
-      
-      console.log(`❌ [${requestId}] Current position spread too wide for ${currentPosition.instrument_name}: ${currentSpreadFormatted} > ${thresholdFormatted}`);
-      console.log(`📊 [${requestId}] Current Bid: ${currentOptionDetails.best_bid_price}, Ask: ${currentOptionDetails.best_ask_price}`);
-      
-      return {
-        success: false,
-        message: `平仓价差过大Price spread too wide for current position: ${currentSpreadFormatted} exceeds threshold ${thresholdFormatted}`
-      };
-    }
-    
     // 获取新的期权工具 - 现在使用正确的underlying参数
     const deltaResult = await deribitClient.getInstrumentByDelta(
       currency,
@@ -116,26 +89,32 @@ export async function executePositionAdjustment(
 
     console.log(`📉 [${requestId}] Closing current position: ${closeDirection} ${closeQuantity} contracts of ${currentPosition.instrument_name}`);
 
-    const closeResult = await deribitClient.placeOrder(
-      currentPosition.instrument_name,
-      closeDirection,
-      closeQuantity,
-      'market', // 使用市价单快速平仓
-      undefined,
-      accessToken
+    // 使用executePositionClose进行渐进式平仓，提供更好的执行效果
+    const closeResult = await executePositionClose(
+      {
+        requestId: `${requestId}_close`,
+        accountName,
+        currentPosition,
+        deltaRecord,
+        accessToken,
+        closeRatio: 1.0, // 全平当前仓位
+        isMarketOrder: false // 使用限价单+渐进式策略，而不是市价单
+      },
+      {
+        deribitClient,
+        deltaManager,
+        deribitAuth
+      }
     );
 
-    if (!closeResult) {
-      throw new Error(`Failed to close position: No response received`);
+    if (!closeResult.success) {
+      throw new Error(`Failed to close position: ${closeResult.error || 'Unknown error'}`);
     }
 
-    console.log(`✅ [${requestId}] Current position closed successfully: ${closeResult.order.order_id}`);
+    console.log(`✅ [${requestId}] Current position closed successfully using progressive strategy`);
+    console.log(`🗑️ [${requestId}] Delta record deletion: ${closeResult.deltaRecordDeleted ? 'success' : 'failed'} (handled by executePositionClose)`);
 
-    // 3. 删除数据库记录
-    const deleteSuccess = deltaManager.deleteRecord(deltaRecord.id!);
-    console.log(`🗑️ [${requestId}] Delta record deletion: ${deleteSuccess ? 'success' : 'failed'} (ID: ${deltaRecord.id})`);
-
-    // 4. 开新仓位
+    // 3. 开新仓位
     const newDirection = currentPosition.direction;//deltaRecord.move_position_delta > 0 ? 'buy' : 'sell';
     const newQuantity = Math.abs(currentPosition.size);
     const instrumentName = deltaResult.instrument.instrument_name
@@ -305,6 +284,7 @@ export async function executePositionCloseByTvId(
       if (currentPosition) {
         console.log(`🔄 Executing close for instrument: ${deltaRecord.instrument_name}`);
 
+        // 执行平仓（价差检查已移至executePositionClose函数内部）
         const closeResult = await executePositionClose(
           {
             requestId: `tv_close_${tvId}_${Date.now()}`,
@@ -396,6 +376,38 @@ export async function executePositionClose(
 
   try {
     console.log(`🔄 [${requestId}] Starting position close for ${currentPosition.instrument_name} (ratio: ${closeRatio})`);
+
+    // 获取价差比率阈值配置
+    const spreadRatioThreshold = parseFloat(process.env.SPREAD_RATIO_THRESHOLD || '0.15');
+
+    // 检查当前仓位的盘口价差是否超过阈值
+    const currentOptionDetails = await deribitClient.getOptionDetails(currentPosition.instrument_name);
+    if (!currentOptionDetails) {
+      return {
+        success: false,
+        error: `Failed to get option details for ${currentPosition.instrument_name}`
+      };
+    }
+
+    const currentSpreadRatio = calculateSpreadRatio(
+      currentOptionDetails.best_bid_price,
+      currentOptionDetails.best_ask_price
+    );
+
+    if (currentSpreadRatio > spreadRatioThreshold) {
+      const currentSpreadFormatted = formatSpreadRatioAsPercentage(currentSpreadRatio);
+      const thresholdFormatted = formatSpreadRatioAsPercentage(spreadRatioThreshold);
+
+      console.log(`❌ [${requestId}] Position spread too wide for ${currentPosition.instrument_name}: ${currentSpreadFormatted} > ${thresholdFormatted}`);
+      console.log(`📊 [${requestId}] Bid: ${currentOptionDetails.best_bid_price}, Ask: ${currentOptionDetails.best_ask_price}`);
+
+      return {
+        success: false,
+        error: `平仓价差过大Price spread too wide: ${currentSpreadFormatted} exceeds threshold ${thresholdFormatted}`
+      };
+    }
+
+    console.log(`✅ [${requestId}] Spread acceptable for ${currentPosition.instrument_name}, proceeding with close`);
 
     // 计算平仓数量
     const totalSize = Math.abs(currentPosition.size);

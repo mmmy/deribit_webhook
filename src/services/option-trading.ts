@@ -347,7 +347,7 @@ export class OptionTradingService {
             params.accountName,
             params.tv_id,
             closeRatio,
-            false,
+            false, // 使用限价单+渐进式策略
             {
               configLoader: this.configLoader,
               deltaManager: this.deltaManager,
@@ -397,12 +397,18 @@ export class OptionTradingService {
             }
           );
 
-          // 执行止损逻辑：平仓50%
-          const stopResult = await this.executeStopLossLogic(
+          // 执行止损逻辑：使用executePositionCloseByTvId进行限价单平仓50%
+          const stopResult = await executePositionCloseByTvId(
             params.accountName,
             params.tv_id,
             0.5, // 平仓50%
-            isMockMode()
+            false, // 使用限价单+渐进式策略进行止损
+            {
+              configLoader: this.configLoader,
+              deltaManager: this.deltaManager,
+              deribitAuth: this.deribitAuth,
+              deribitClient: this.deribitClient
+            }
           );
 
           // 发送止损结果通知到企业微信
@@ -754,235 +760,9 @@ ${directionEmoji} **操作**: ${actionText[details.action] || details.action}
     }
   }
 
-  /**
-   * 执行止损逻辑
-   * @param accountName 账户名称
-   * @param tvId TV信号ID
-   * @param stopRatio 止损比例 (0.5 = 50%)
-   * @param useMockMode 是否使用模拟模式
-   */
-  private async executeStopLossLogic(
-    accountName: string,
-    tvId: number,
-    stopRatio: number,
-    useMockMode: boolean
-  ): Promise<any> {
-    try {
-      console.log(`🛑 [Stop Loss] Starting stop loss execution for tv_id=${tvId}, ratio=${stopRatio}`);
 
-      // 1. 查询数据库中对应tv_id的所有仓位记录
-      const deltaRecords = this.deltaManager.getRecords({
-        account_id: accountName,
-        tv_id: tvId
-      });
 
-      if (deltaRecords.length === 0) {
-        console.log(`⚠️ No delta records found for tv_id: ${tvId}`);
-        return {
-          success: false,
-          message: `No delta records found for tv_id: ${tvId}`
-        };
-      }
 
-      console.log(`📊 Found ${deltaRecords.length} delta record(s) for tv_id: ${tvId}`);
-
-      // 2. 获取访问令牌 - 使用统一认证服务
-      const authResult = await getAuthenticationService().ensureAuthenticated(accountName);
-      
-      if (!authResult && !useMockMode) {
-        return {
-          success: false,
-          message: `Failed to get access token for account: ${accountName}`
-        };
-      }
-
-      // 3. 获取当前仓位信息
-      const positions = useMockMode
-        ? [] // 模拟模式下暂时返回空数组，实际应该从模拟数据中获取
-        : await this.deribitClient.getPositions(authResult!.accessToken, { kind: 'option' });
-
-      // 4. 对每个Delta记录执行止损操作
-      const stopResults = [];
-      for (const deltaRecord of deltaRecords) {
-        const currentPosition = positions.find(pos =>
-          pos.instrument_name === deltaRecord.instrument_name && pos.size !== 0
-        );
-
-        if (currentPosition) {
-          console.log(`🛑 Executing stop loss for instrument: ${deltaRecord.instrument_name}`);
-
-          const stopResult = await this.executePositionStopLoss(
-            currentPosition,
-            stopRatio,
-            useMockMode,
-            accountName
-          );
-
-          stopResults.push(stopResult);
-        } else {
-          console.log(`⚠️ No active position found for instrument: ${deltaRecord.instrument_name}`);
-          stopResults.push({
-            success: false,
-            message: `No active position found for instrument: ${deltaRecord.instrument_name}`
-          });
-        }
-      }
-
-      // 5. 汇总结果
-      const successCount = stopResults.filter(r => r.success).length;
-      const totalCount = stopResults.length;
-
-      return {
-        success: successCount > 0,
-        message: `Stop loss completed: ${successCount}/${totalCount} successful`,
-        orderId: `stop_loss_${tvId}`,
-        executedQuantity: successCount,
-        stopRatio: stopRatio,
-        results: stopResults
-      };
-
-    } catch (error) {
-      console.error(`❌ Stop loss failed for tv_id ${tvId}:`, error);
-      return {
-        success: false,
-        message: `Stop loss failed: ${error instanceof Error ? error.message : 'Unknown error'}`
-      };
-    }
-  }
-
-  /**
-   * 执行单个仓位的止损操作
-   * @param position 当前仓位
-   * @param stopRatio 止损比例
-   * @param useMockMode 是否使用模拟模式
-   * @param accountName 账户名称
-   */
-  private async executePositionStopLoss(
-    position: any,
-    stopRatio: number,
-    useMockMode: boolean,
-    accountName: string
-  ): Promise<any> {
-    try {
-      console.log(`🛑 [Stop Loss] Processing position: ${position.instrument_name}, size: ${position.size}`);
-
-      // 1. 计算止损数量
-      const totalSize = Math.abs(position.size);
-      const stopQuantity = totalSize * stopRatio;
-      const stopDirection = position.direction === 'buy' ? 'sell' : 'buy';
-
-      console.log(`🛑 [Stop Loss] Stop quantity: ${stopQuantity} (${(stopRatio * 100).toFixed(1)}% of ${totalSize})`);
-
-      // 2. 获取期权价格信息
-      const optionDetails = useMockMode
-        ? await this.mockClient.getOptionDetails(position.instrument_name)
-        : await this.deribitClient.getOptionDetails(position.instrument_name);
-
-      if (!optionDetails) {
-        throw new Error(`Failed to get option details for ${position.instrument_name}`);
-      }
-
-      // 3. 计算初始价格：(bid_price + ask_price) / 2
-      const initialPrice = (optionDetails.best_bid_price + optionDetails.best_ask_price) / 2;
-      console.log(`🛑 [Stop Loss] Initial price: ${initialPrice} (bid: ${optionDetails.best_bid_price}, ask: ${optionDetails.best_ask_price})`);
-
-      // 4. 获取工具详情用于价格修正
-      const instrumentInfo = useMockMode
-        ? await this.mockClient.getInstrument(position.instrument_name)
-        : await this.deribitClient.getInstrument(position.instrument_name);
-
-      if (!instrumentInfo) {
-        throw new Error(`Failed to get instrument details for ${position.instrument_name}`);
-      }
-
-      // 5. 修正价格和数量
-      const { correctOrderAmount, correctOrderPrice } = await import('../utils/price-correction');
-      const amountResult = correctOrderAmount(stopQuantity, instrumentInfo);
-      const priceResult = correctOrderPrice(initialPrice, instrumentInfo);
-
-      const finalQuantity = amountResult.correctedAmount;
-      const finalPrice = priceResult.correctedPrice;
-
-      console.log(`🛑 [Stop Loss] Corrected params: quantity ${stopQuantity} → ${finalQuantity}, price ${initialPrice} → ${finalPrice}`);
-
-      // 6. 获取访问令牌并下单 - 使用统一认证服务
-      let accessToken: string | undefined;
-      if (!useMockMode) {
-        const authToken = await getAuthenticationService().ensureAuthenticated(accountName);
-        if (!authToken) {
-          throw new Error(`Failed to get access token for account: ${accountName}`);
-        }
-        accessToken = authToken.accessToken;
-      }
-
-      const orderResult = useMockMode
-        ? await this.mockClient.placeOrder({
-            instrument_name: position.instrument_name,
-            amount: finalQuantity,
-            type: 'limit',
-            direction: stopDirection,
-            price: finalPrice
-          })
-        : await this.deribitClient.placeOrder(
-            position.instrument_name,
-            stopDirection,
-            finalQuantity,
-            'limit',
-            finalPrice,
-            accessToken!
-          );
-
-      if (!orderResult) {
-        throw new Error('Failed to place stop loss order');
-      }
-
-      console.log(`🛑 [Stop Loss] Order placed: ${orderResult.order?.order_id || 'mock_order'}`);
-
-      // 7. 使用渐进式限价策略
-      if (!useMockMode && orderResult.order?.order_id) {
-        console.log(`🎯 [Stop Loss] Starting progressive limit strategy for order ${orderResult.order.order_id}`);
-
-        const { executeProgressiveLimitStrategy } = await import('./progressive-limit-strategy');
-        const strategyResult = await executeProgressiveLimitStrategy(
-          {
-            orderId: orderResult.order.order_id,
-            instrumentName: position.instrument_name,
-            direction: stopDirection,
-            quantity: finalQuantity,
-            initialPrice: finalPrice,
-            accountName: accountName,
-            instrumentDetail: instrumentInfo,
-            timeout: 8000,
-            maxStep: 3
-          },
-          {
-            deribitAuth: this.deribitAuth,
-            deribitClient: this.deribitClient
-          }
-        );
-
-        console.log(`🏁 [Stop Loss] Progressive strategy completed: ${strategyResult.success ? 'success' : 'failed'}`);
-      }
-
-      return {
-        success: true,
-        orderId: orderResult.order?.order_id || 'mock_order',
-        message: `Stop loss executed successfully for ${position.instrument_name}`,
-        instrumentName: position.instrument_name,
-        executedQuantity: finalQuantity,
-        executedPrice: finalPrice,
-        stopRatio: stopRatio
-      };
-
-    } catch (error) {
-      console.error(`❌ Stop loss failed for position ${position.instrument_name}:`, error);
-      return {
-        success: false,
-        message: `Stop loss failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        instrumentName: position.instrument_name
-      };
-    }
-  }
 
   /**
    * 发送止损通知到企业微信

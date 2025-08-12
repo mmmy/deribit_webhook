@@ -164,6 +164,19 @@ export class LogManager {
     }
 
     // 2. PM2格式: timestamp level: message
+    // 支持毫秒格式: YYYY-MM-DD HH:mm:ss.SSS Z
+    const pm2MillisMatch = line.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} [+-]\d{4}): (.+)/);
+    if (pm2MillisMatch) {
+      const [, timestamp, message] = pm2MillisMatch;
+      return {
+        timestamp: new Date(timestamp).toISOString(),
+        level: this.extractLogLevel(message),
+        message: message,
+        raw: line
+      };
+    }
+
+    // 兼容旧的PM2格式: YYYY-MM-DD HH:mm:ss Z (无毫秒)
     const pm2Match = line.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [+-]\d{4}): (.+)/);
     if (pm2Match) {
       const [, timestamp, message] = pm2Match;
@@ -176,7 +189,8 @@ export class LogManager {
     }
 
     // 3. Console.log格式: 尝试提取时间戳
-    const consoleMatch = line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z|\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/);
+    // 支持多种时间戳格式，包括毫秒
+    const consoleMatch = line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z|\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}|\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/);
     if (consoleMatch) {
       const timestamp = consoleMatch[1];
       return {

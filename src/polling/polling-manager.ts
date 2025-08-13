@@ -2,11 +2,12 @@ import { getPositionPollingService } from '../core';
 import { PollingResult, PositionPollingService } from './position-poller';
 
 /**
- * Polling manager - handles scheduled position polling
+ * Polling manager - handles scheduled position and order polling
  */
 export class PollingManager {
   private pollingService: PositionPollingService;
-  private pollingInterval: NodeJS.Timeout | null = null;
+  private positionPollingInterval: NodeJS.Timeout | null = null;
+  private orderPollingInterval: NodeJS.Timeout | null = null;
   private isRunning: boolean = false;
 
   constructor() {
@@ -22,23 +23,35 @@ export class PollingManager {
       return false;
     }
 
-    // Get polling interval from environment (default: 15 minutes)
-    const pollingIntervalMinutes = parseInt(process.env.POLLING_INTERVAL_MINUTES || '15', 10);
-    const POLLING_INTERVAL = pollingIntervalMinutes * 60 * 1000;
+    // Get polling intervals from environment
+    const positionIntervalMinutes = parseInt(process.env.POSITION_POLLING_INTERVAL_MINUTES || '15', 10);
+    const orderIntervalMinutes = parseInt(process.env.ORDER_POLLING_INTERVAL_MINUTES || '5', 10);
 
-    console.log(`⏰ Starting positions polling every ${pollingIntervalMinutes} minutes`);
+    const POSITION_POLLING_INTERVAL = positionIntervalMinutes * 60 * 1000;
+    const ORDER_POLLING_INTERVAL = orderIntervalMinutes * 60 * 1000;
+
+    console.log(`⏰ Starting polling:`);
+    console.log(`   📊 Position polling every ${positionIntervalMinutes} minutes`);
+    console.log(`   📋 Order polling every ${orderIntervalMinutes} minutes`);
 
     // Execute immediately
-    this.executePollingCycle().catch(error => {
+    this.executeInitialPolling().catch(error => {
       console.error('Initial polling failed:', error);
     });
 
-    // Set up scheduled polling
-    this.pollingInterval = setInterval(() => {
-      this.executePollingCycle().catch(error => {
-        console.error('Scheduled polling failed:', error);
+    // Set up scheduled position polling
+    this.positionPollingInterval = setInterval(() => {
+      this.pollingService.pollAllAccountsPositions().catch(error => {
+        console.error('Position polling failed:', error);
       });
-    }, POLLING_INTERVAL);
+    }, POSITION_POLLING_INTERVAL);
+
+    // Set up scheduled order polling
+    this.orderPollingInterval = setInterval(() => {
+      this.pollingService.pollAllAccountsPendingOrders().catch(error => {
+        console.error('Order polling failed:', error);
+      });
+    }, ORDER_POLLING_INTERVAL);
 
     this.isRunning = true;
     return true;
@@ -48,52 +61,78 @@ export class PollingManager {
    * Stop scheduled polling
    */
   stopPolling(): boolean {
-    if (!this.isRunning || !this.pollingInterval) {
+    if (!this.isRunning) {
       console.log('⚠️ Polling is not running');
       return false;
     }
 
-    clearInterval(this.pollingInterval);
-    this.pollingInterval = null;
+    // Clear position polling interval
+    if (this.positionPollingInterval) {
+      clearInterval(this.positionPollingInterval);
+      this.positionPollingInterval = null;
+    }
+
+    // Clear order polling interval
+    if (this.orderPollingInterval) {
+      clearInterval(this.orderPollingInterval);
+      this.orderPollingInterval = null;
+    }
+
     this.isRunning = false;
-    
-    console.log('⏹️ Positions polling stopped');
+
+    console.log('⏹️ All polling stopped');
     return true;
   }
 
   /**
-   * 执行完整的轮询周期（仓位 + 未成交订单）
+   * 执行初始轮询（立即执行一次）
    */
-  private async executePollingCycle(): Promise<void> {
+  private async executeInitialPolling(): Promise<void> {
     try {
-      console.log('🔄 Starting polling cycle...');
+      console.log('🔄 Starting initial polling...');
 
       // 1. 轮询仓位
-      console.log('📊 Polling positions...');
+      console.log('📊 Initial position polling...');
       const positionResults = await this.pollingService.pollAllAccountsPositions();
-      console.log(`✅ Position polling completed: ${positionResults.length} accounts processed`);
+      console.log(`✅ Initial position polling completed: ${positionResults.length} accounts processed`);
 
       // 2. 轮询未成交订单
-      console.log('📋 Polling pending orders...');
+      console.log('📋 Initial order polling...');
       const orderResults = await this.pollingService.pollAllAccountsPendingOrders();
-      console.log(`✅ Pending orders polling completed: ${orderResults.length} accounts processed`);
+      console.log(`✅ Initial order polling completed: ${orderResults.length} accounts processed`);
 
-      console.log('🎉 Polling cycle completed successfully');
+      console.log('🎉 Initial polling completed successfully');
 
     } catch (error) {
-      console.error('❌ Polling cycle failed:', error);
+      console.error('❌ Initial polling failed:', error);
       throw error;
     }
   }
 
   /**
-   * Manual trigger for polling
+   * Manual trigger for polling (both position and order)
    */
   async triggerPolling(): Promise<PollingResult[]> {
-    console.log('📡 Manual polling triggered');
-    await this.executePollingCycle();
+    console.log('� Manual polling triggered');
+    await this.executeInitialPolling();
     // 返回仓位轮询结果（保持向后兼容）
     return await this.pollingService.pollAllAccountsPositions();
+  }
+
+  /**
+   * Manual trigger for position polling only
+   */
+  async triggerPositionPolling(): Promise<PollingResult[]> {
+    console.log('� Manual position polling triggered');
+    return await this.pollingService.pollAllAccountsPositions();
+  }
+
+  /**
+   * Manual trigger for order polling only
+   */
+  async triggerOrderPolling(): Promise<PollingResult[]> {
+    console.log('📡 Manual order polling triggered');
+    return await this.pollingService.pollAllAccountsPendingOrders();
   }
 
   /**
@@ -101,16 +140,23 @@ export class PollingManager {
    */
   getStatus(): {
     isActive: boolean;
-    intervalMinutes: number;
-    nextPollEstimate: string | null;
+    positionIntervalMinutes: number;
+    orderIntervalMinutes: number;
+    nextPositionPollEstimate: string | null;
+    nextOrderPollEstimate: string | null;
   } {
-    const intervalMinutes = parseInt(process.env.POLLING_INTERVAL_MINUTES || '15', 10);
-    
+    const positionIntervalMinutes = parseInt(process.env.POSITION_POLLING_INTERVAL_MINUTES || '15', 10);
+    const orderIntervalMinutes = parseInt(process.env.ORDER_POLLING_INTERVAL_MINUTES || '5', 10);
+
     return {
       isActive: this.isRunning,
-      intervalMinutes,
-      nextPollEstimate: this.isRunning ? 
-        new Date(Date.now() + intervalMinutes * 60 * 1000).toISOString() :
+      positionIntervalMinutes,
+      orderIntervalMinutes,
+      nextPositionPollEstimate: this.isRunning ?
+        new Date(Date.now() + positionIntervalMinutes * 60 * 1000).toISOString() :
+        null,
+      nextOrderPollEstimate: this.isRunning ?
+        new Date(Date.now() + orderIntervalMinutes * 60 * 1000).toISOString() :
         null
     };
   }

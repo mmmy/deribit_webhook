@@ -4,7 +4,7 @@
  */
 
 import axios, { AxiosInstance } from 'axios';
-import type { DeribitPosition } from '../types';
+import type { DeribitOrder, DeribitPosition } from '../types';
 
 // 配置接口
 interface DeribitConfig {
@@ -111,7 +111,7 @@ export class DeribitPrivateAPI {
     currency?: string;         // BTC, ETH
     kind?: string;             // option, future, spot
     type?: string;             // all, limit, stop_all, stop_limit, stop_market
-  }) {
+  }): Promise<DeribitOrder[]> {
     const jsonRpcRequest = {
       jsonrpc: "2.0",
       id: Date.now(),
@@ -437,7 +437,7 @@ export class DeribitPrivateAPI {
    */
   async getOrderState(params: {
     order_id: string;          // 订单ID
-  }) {
+  }): Promise<DeribitOrder> {
     const jsonRpcRequest = {
       jsonrpc: "2.0",
       id: Date.now(),

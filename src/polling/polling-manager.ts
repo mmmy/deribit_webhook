@@ -1,5 +1,5 @@
-import { PositionPollingService, PollingResult } from './position-poller';
 import { getPositionPollingService } from '../core';
+import { PollingResult, PositionPollingService } from './position-poller';
 
 /**
  * Polling manager - handles scheduled position polling
@@ -29,13 +29,13 @@ export class PollingManager {
     console.log(`⏰ Starting positions polling every ${pollingIntervalMinutes} minutes`);
 
     // Execute immediately
-    this.pollingService.pollAllAccountsPositions().catch(error => {
+    this.executePollingCycle().catch(error => {
       console.error('Initial polling failed:', error);
     });
 
     // Set up scheduled polling
     this.pollingInterval = setInterval(() => {
-      this.pollingService.pollAllAccountsPositions().catch(error => {
+      this.executePollingCycle().catch(error => {
         console.error('Scheduled polling failed:', error);
       });
     }, POLLING_INTERVAL);
@@ -62,10 +62,37 @@ export class PollingManager {
   }
 
   /**
+   * 执行完整的轮询周期（仓位 + 未成交订单）
+   */
+  private async executePollingCycle(): Promise<void> {
+    try {
+      console.log('🔄 Starting polling cycle...');
+
+      // 1. 轮询仓位
+      console.log('📊 Polling positions...');
+      const positionResults = await this.pollingService.pollAllAccountsPositions();
+      console.log(`✅ Position polling completed: ${positionResults.length} accounts processed`);
+
+      // 2. 轮询未成交订单
+      console.log('📋 Polling pending orders...');
+      const orderResults = await this.pollingService.pollAllAccountsPendingOrders();
+      console.log(`✅ Pending orders polling completed: ${orderResults.length} accounts processed`);
+
+      console.log('🎉 Polling cycle completed successfully');
+
+    } catch (error) {
+      console.error('❌ Polling cycle failed:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Manual trigger for polling
    */
   async triggerPolling(): Promise<PollingResult[]> {
-    console.log('📡 Manual positions polling triggered');
+    console.log('📡 Manual polling triggered');
+    await this.executePollingCycle();
+    // 返回仓位轮询结果（保持向后兼容）
     return await this.pollingService.pollAllAccountsPositions();
   }
 

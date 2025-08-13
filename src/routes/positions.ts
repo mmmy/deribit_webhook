@@ -8,17 +8,45 @@ const router = Router();
 // Create a single polling manager instance
 const pollingManager = new PollingManager();
 
-// Manual trigger for position polling
+// Manual trigger for all polling (position + order)
 router.post('/api/positions/poll', async (req, res) => {
   try {
-    console.log('📡 Manual positions polling triggered via API');
+    console.log('📡 Manual polling (all) triggered via API');
 
     const results = await pollingManager.triggerPolling();
 
-    return ApiResponse.ok(res, results, { message: 'Positions polling completed successfully' });
+    return ApiResponse.ok(res, results, { message: 'All polling completed successfully' });
   } catch (error) {
     console.error('Manual polling failed:', error);
+    return ApiResponse.internalError(res, error as Error, { message: 'Failed to poll' });
+  }
+});
+
+// Manual trigger for position polling only
+router.post('/api/positions/poll-positions', async (req, res) => {
+  try {
+    console.log('📡 Manual position polling triggered via API');
+
+    const results = await pollingManager.triggerPositionPolling();
+
+    return ApiResponse.ok(res, results, { message: 'Position polling completed successfully' });
+  } catch (error) {
+    console.error('Manual position polling failed:', error);
     return ApiResponse.internalError(res, error as Error, { message: 'Failed to poll positions' });
+  }
+});
+
+// Manual trigger for order polling only
+router.post('/api/positions/poll-orders', async (req, res) => {
+  try {
+    console.log('📡 Manual order polling triggered via API');
+
+    const results = await pollingManager.triggerOrderPolling();
+
+    return ApiResponse.ok(res, results, { message: 'Order polling completed successfully' });
+  } catch (error) {
+    console.error('Manual order polling failed:', error);
+    return ApiResponse.internalError(res, error as Error, { message: 'Failed to poll orders' });
   }
 });
 
@@ -127,4 +155,4 @@ router.post('/api/positions/stop-polling', (req, res) => {
 });
 
 // Export both the router and the polling manager for server startup
-export { router as positionsRoutes, pollingManager };
+export { pollingManager, router as positionsRoutes };

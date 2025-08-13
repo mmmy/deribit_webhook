@@ -5,7 +5,7 @@
 
 import { ConfigLoader } from '../config';
 import { DeltaManager } from '../database/delta-manager';
-import { DeltaRecord } from '../database/types';
+import { DeltaRecord, DeltaRecordType } from '../database/types';
 import { DeribitPosition, OptionTradingParams, PositionAdjustmentResult } from '../types';
 import { correctOrderAmount, correctSmartPrice } from '../utils/price-correction';
 import { calculateSpreadRatio, formatSpreadRatioAsPercentage } from '../utils/spread-calculation';
@@ -570,6 +570,11 @@ export async function executePositionAdjustmentByTvId(
       account_id: accountName,
       tv_id: tvId,
       // record_type: DeltaRecordType.POSITION
+    }).sort((a, b) => {
+      // 排序: position类型记录排在前面, order类型记录排在后面
+      if (a.record_type === DeltaRecordType.POSITION && b.record_type === DeltaRecordType.ORDER) return -1;
+      if (a.record_type === DeltaRecordType.ORDER && b.record_type === DeltaRecordType.POSITION) return 1;
+      return 0; // 相同类型保持原顺序
     });
 
     if (deltaRecords.length === 0) {
@@ -607,19 +612,35 @@ export async function executePositionAdjustmentByTvId(
     const accessToken = tokenInfo.accessToken;
 
     // 4. 获取当前仓位信息 - 获取所有期权仓位
-    const positions = await deribitClient.getPositions(accessToken, {
+    const allPositions = await deribitClient.getPositions(accessToken, {
       kind: 'option'
     });
 
-    // 5. 对每个Delta记录执行仓位调整
+    // 找出需要调整的仓位：与Delta记录匹配且有实际仓位的合约
+    const positionsToAdjust = allPositions.filter(pos =>
+      deltaRecords.some(record => record.instrument_name === pos.instrument_name) &&
+      pos.size !== 0
+    );
+
+    // 5. 对每个需要调整的仓位执行调整
     const adjustmentResults = [];
-    for (const deltaRecord of deltaRecords) {
-      const currentPosition = positions.find(pos =>
-        pos.instrument_name === deltaRecord.instrument_name && pos.size !== 0
+
+    if (positionsToAdjust.length === 0) {
+      console.log(`⚠️ No positions to adjust for tv_id: ${tvId}`);
+      return {
+        success: false,
+        message: `No active positions found for tv_id: ${tvId}`
+      };
+    }
+
+    for (const currentPosition of positionsToAdjust) {
+      // 找到对应的Delta记录
+      const deltaRecord = deltaRecords.find(record =>
+        record.instrument_name === currentPosition.instrument_name
       );
 
-      if (currentPosition) {
-        console.log(`🔄 Executing adjustment for instrument: ${deltaRecord.instrument_name}`);
+      if (deltaRecord) {
+        console.log(`🔄 Executing adjustment for instrument: ${currentPosition.instrument_name}`);
 
         const adjustmentResult = await executePositionAdjustment(
           {
@@ -640,10 +661,10 @@ export async function executePositionAdjustmentByTvId(
 
         adjustmentResults.push(adjustmentResult);
       } else {
-        console.log(`⚠️ No active position found for instrument: ${deltaRecord.instrument_name}`);
+        console.log(`⚠️ No delta record found for position: ${currentPosition.instrument_name}`);
         adjustmentResults.push({
           success: false,
-          message: `No active position found for instrument: ${deltaRecord.instrument_name}`
+          message: `No delta record found for position: ${currentPosition.instrument_name}`
         });
       }
     }

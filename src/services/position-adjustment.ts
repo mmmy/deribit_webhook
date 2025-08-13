@@ -67,6 +67,16 @@ export async function executePositionAdjustment(
       throw new Error(`Failed to get instrument by delta: No suitable instrument found`);
     }
 
+    // 如果deltaResult和当前持仓的名称一致, 返回失败即可
+    if (deltaResult.instrument.instrument_name === currentPosition.instrument_name) {
+      console.log(`⚠️ [${requestId}] Selected instrument is the same as current position: ${currentPosition.instrument_name}`);
+      return {
+        success: false,
+        reason: `无需调整：目标合约与当前持仓合约相同`,
+        error: `当前持仓: ${currentPosition.instrument_name} 目标合约: ${deltaResult.instrument.instrument_name} 状态: 合约名称完全相同`
+      };
+    }
+
     // 检查盘口价差是否超过阈值
     if (deltaResult.spreadRatio > spreadRatioThreshold) {
       const spreadRatioFormatted = formatSpreadRatioAsPercentage(deltaResult.spreadRatio);
@@ -77,7 +87,8 @@ export async function executePositionAdjustment(
       
       return {
         success: false,
-        message: `换仓价差过大Price spread too wide: ${spreadRatioFormatted} exceeds threshold ${thresholdFormatted}`
+        reason: `换仓价差过大：${spreadRatioFormatted} > ${thresholdFormatted}`,
+        error: `合约: ${deltaResult.instrument.instrument_name} 买价: ${deltaResult.details.best_bid_price} 卖价: ${deltaResult.details.best_ask_price}\n价差比例: ${spreadRatioFormatted}\n阈值: ${thresholdFormatted}`
       };
     }
 
@@ -115,7 +126,8 @@ export async function executePositionAdjustment(
     console.log(`🗑️ [${requestId}] Delta record deletion: ${closeResult.deltaRecordDeleted ? 'success' : 'failed'} (handled by executePositionClose)`);
 
     // 3. 开新仓位
-    const newDirection = currentPosition.direction;//deltaRecord.move_position_delta > 0 ? 'buy' : 'sell';
+    // 根据move_position_delta确定新仓位方向：正值买入，负值卖出
+    const newDirection = deltaRecord.move_position_delta > 0 ? 'buy' : 'sell';
     const newQuantity = Math.abs(currentPosition.size);
     const instrumentName = deltaResult.instrument.instrument_name
     console.log(`📈 [${requestId}] Opening new position: ${newDirection} ${newQuantity} contracts of ${deltaResult.instrument.instrument_name}`);

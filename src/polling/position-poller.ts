@@ -1,11 +1,11 @@
-import { 
-  ConfigLoader, 
-  DeribitAuth, 
-  DeribitClient, 
-  DeltaManager, 
-  MockDeribitClient 
-} from '../services';
 import { DeribitPrivateAPI, createAuthInfo, getConfigByEnvironment } from '../api';
+import {
+    ConfigLoader,
+    DeltaManager,
+    DeribitAuth,
+    DeribitClient,
+    MockDeribitClient
+} from '../services';
 import { executePositionAdjustment } from '../services/position-adjustment';
 
 export interface PollingResult {
@@ -312,7 +312,7 @@ export class PositionPollingService {
 
 👤 **账户**: ${accountName}
 💬 **失败原因**: ${result.reason}
-${result.error ? `📋 **错误详情**: \`\`\`\n${result.error}\n\`\`\`` : ''}
+${result.error ? `📋 **错误详情**: ${result.error}` : ''}
 🔄 **请求ID**: ${requestId}
 ⏰ **失败时间**: ${new Date().toLocaleString('zh-CN')}
 

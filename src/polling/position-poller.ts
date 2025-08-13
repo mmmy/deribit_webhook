@@ -184,19 +184,6 @@ export class PositionPollingService {
             error: errorMessage,
             timestamp: new Date().toISOString()
           });
-
-          // 发送失败通知
-          try {
-            await this.wechatNotification.sendPendingOrdersNotification(
-              account.name,
-              [],
-              requestId,
-              false,
-              errorMessage
-            );
-          } catch (notificationError) {
-            console.error(`❌ [${requestId}] Failed to send failure WeChat notification for account ${account.name}:`, notificationError);
-          }
         }
       }
 

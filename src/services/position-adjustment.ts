@@ -53,6 +53,7 @@ export async function executePositionAdjustment(
     // 确定方向：如果move_position_delta为正，选择看涨期权；为负，选择看跌期权
     const isCall = deltaRecord.move_position_delta > 0;
     const spreadRatioThreshold = parseFloat(process.env.SPREAD_RATIO_THRESHOLD || '0.15');
+    const spreadTickThreshold = parseInt(process.env.SPREAD_TICK_MULTIPLE_THRESHOLD || '2', 10);
 
     // 获取新的期权工具 - 现在使用正确的underlying参数
     const deltaResult = await deribitClient.getInstrumentByDelta(
@@ -77,18 +78,28 @@ export async function executePositionAdjustment(
       };
     }
 
-    // 检查盘口价差是否超过阈值
-    if (deltaResult.spreadRatio > spreadRatioThreshold) {
+    // 检查盘口价差是否合理（使用综合判断逻辑）
+    const { isSpreadReasonable } = await import('../utils/spread-calculation');
+    const isReasonable = isSpreadReasonable(
+      deltaResult.details.best_bid_price,
+      deltaResult.details.best_ask_price,
+      deltaResult.instrument.tick_size,
+      spreadRatioThreshold,
+      spreadTickThreshold
+    );
+
+    if (!isReasonable) {
       const spreadRatioFormatted = formatSpreadRatioAsPercentage(deltaResult.spreadRatio);
       const thresholdFormatted = formatSpreadRatioAsPercentage(spreadRatioThreshold);
-      
-      console.log(`❌ [${requestId}] Spread ratio too wide for ${deltaResult.instrument.instrument_name}: ${spreadRatioFormatted} > ${thresholdFormatted}`);
-      console.log(`📊 [${requestId}] Bid: ${deltaResult.details.best_bid_price}, Ask: ${deltaResult.details.best_ask_price}`);
-      
+      const tickMultiple = ((deltaResult.details.best_ask_price - deltaResult.details.best_bid_price) / deltaResult.instrument.tick_size).toFixed(1);
+
+      console.log(`❌ [${requestId}] Spread too wide for ${deltaResult.instrument.instrument_name}: ratio=${spreadRatioFormatted} > ${thresholdFormatted}, tick_multiple=${tickMultiple} > ${spreadTickThreshold}`);
+      console.log(`📊 [${requestId}] Bid: ${deltaResult.details.best_bid_price}, Ask: ${deltaResult.details.best_ask_price}, TickSize: ${deltaResult.instrument.tick_size}`);
+
       return {
         success: false,
-        reason: `换仓价差过大：${spreadRatioFormatted} > ${thresholdFormatted}`,
-        error: `合约: ${deltaResult.instrument.instrument_name} 买价: ${deltaResult.details.best_bid_price} 卖价: ${deltaResult.details.best_ask_price}\n价差比例: ${spreadRatioFormatted}\n阈值: ${thresholdFormatted}`
+        reason: `换仓价差过大：比率${spreadRatioFormatted} > ${thresholdFormatted} 且 步进倍数${tickMultiple} > ${spreadTickThreshold}`,
+        error: `合约: ${deltaResult.instrument.instrument_name}\n买价: ${deltaResult.details.best_bid_price}\n卖价: ${deltaResult.details.best_ask_price}\n价差比例: ${spreadRatioFormatted}\n步进倍数: ${tickMultiple}\n比率阈值: ${thresholdFormatted}\n步进阈值: ${spreadTickThreshold}`
       };
     }
 
@@ -389,8 +400,9 @@ export async function executePositionClose(
   try {
     console.log(`🔄 [${requestId}] Starting position close for ${currentPosition.instrument_name} (ratio: ${closeRatio})`);
 
-    // 获取价差比率阈值配置
+    // 获取价差阈值配置
     const spreadRatioThreshold = parseFloat(process.env.SPREAD_RATIO_THRESHOLD || '0.15');
+    const spreadTickThreshold = parseInt(process.env.SPREAD_TICK_MULTIPLE_THRESHOLD || '2', 10);
 
     // 检查当前仓位的盘口价差是否超过阈值
     const currentOptionDetails = await deribitClient.getOptionDetails(currentPosition.instrument_name);
@@ -401,21 +413,41 @@ export async function executePositionClose(
       };
     }
 
+    // 获取合约信息以获取tick_size
+    const instrumentInfo = await deribitClient.getInstrument(currentPosition.instrument_name);
+    if (!instrumentInfo) {
+      return {
+        success: false,
+        error: `Failed to get instrument details for ${currentPosition.instrument_name}`
+      };
+    }
+
     const currentSpreadRatio = calculateSpreadRatio(
       currentOptionDetails.best_bid_price,
       currentOptionDetails.best_ask_price
     );
 
-    if (currentSpreadRatio > spreadRatioThreshold) {
+    // 使用综合价差判断逻辑
+    const { isSpreadReasonable } = await import('../utils/spread-calculation');
+    const isReasonable = isSpreadReasonable(
+      currentOptionDetails.best_bid_price,
+      currentOptionDetails.best_ask_price,
+      instrumentInfo.tick_size,
+      spreadRatioThreshold,
+      spreadTickThreshold
+    );
+
+    if (!isReasonable) {
       const currentSpreadFormatted = formatSpreadRatioAsPercentage(currentSpreadRatio);
       const thresholdFormatted = formatSpreadRatioAsPercentage(spreadRatioThreshold);
+      const tickMultiple = ((currentOptionDetails.best_ask_price - currentOptionDetails.best_bid_price) / instrumentInfo.tick_size).toFixed(1);
 
-      console.log(`❌ [${requestId}] Position spread too wide for ${currentPosition.instrument_name}: ${currentSpreadFormatted} > ${thresholdFormatted}`);
-      console.log(`📊 [${requestId}] Bid: ${currentOptionDetails.best_bid_price}, Ask: ${currentOptionDetails.best_ask_price}`);
+      console.log(`❌ [${requestId}] Position spread too wide for ${currentPosition.instrument_name}: ratio=${currentSpreadFormatted} > ${thresholdFormatted}, tick_multiple=${tickMultiple} > ${spreadTickThreshold}`);
+      console.log(`📊 [${requestId}] Bid: ${currentOptionDetails.best_bid_price}, Ask: ${currentOptionDetails.best_ask_price}, TickSize: ${instrumentInfo.tick_size}`);
 
       return {
         success: false,
-        error: `平仓价差过大Price spread too wide: ${currentSpreadFormatted} exceeds threshold ${thresholdFormatted}`
+        error: `平仓价差过大：比率${currentSpreadFormatted} > ${thresholdFormatted} 且 步进倍数${tickMultiple} > ${spreadTickThreshold}`
       };
     }
 
@@ -425,11 +457,7 @@ export async function executePositionClose(
     const totalSize = Math.abs(currentPosition.size);
     const rawCloseQuantity = totalSize * closeRatio;
 
-    // 获取工具详情用于数量修正
-    const instrumentInfo = await deribitClient.getInstrument(currentPosition.instrument_name);
-    if (!instrumentInfo) {
-      throw new Error(`Failed to get instrument details for ${currentPosition.instrument_name}`);
-    }
+    // instrumentInfo 已经在上面获取过了，直接使用
 
     // 使用纯函数修正平仓数量
     const amountResult = correctOrderAmount(rawCloseQuantity, instrumentInfo);

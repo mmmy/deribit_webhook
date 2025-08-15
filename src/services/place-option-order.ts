@@ -6,16 +6,16 @@
 import { ConfigLoader } from '../config';
 import { OptionTradingParams, OptionTradingResult } from '../types';
 import { correctOrderParameters, correctOrderPrice } from '../utils/price-correction';
-import { calculateSpreadRatio, formatSpreadRatioAsPercentage, isSpreadTooWide } from '../utils/spread-calculation';
+import { calculateSpreadRatio, formatSpreadRatioAsPercentage } from '../utils/spread-calculation';
 import { DeribitAuth } from './auth';
 import { DeribitClient } from './deribit-client';
 import { MockDeribitClient } from './mock-deribit';
 import {
-  handleNonImmediateOrder as handleNonImmediateOrderPure,
-  OrderNotificationInfo,
-  OrderSupportDependencies,
-  recordPositionInfoToDatabase as recordPositionInfoToDatabasePure,
-  sendOrderNotification as sendOrderNotificationPure
+    handleNonImmediateOrder as handleNonImmediateOrderPure,
+    OrderNotificationInfo,
+    OrderSupportDependencies,
+    recordPositionInfoToDatabase as recordPositionInfoToDatabasePure,
+    sendOrderNotification as sendOrderNotificationPure
 } from './order-support-functions';
 
 // 依赖注入接口
@@ -136,8 +136,21 @@ async function handleRealOrder(
   console.log('盘口价差:', formatSpreadRatioAsPercentage(spreadRatio));
 
   const spreadRatioThreshold = parseFloat(process.env.SPREAD_RATIO_THRESHOLD || '0.15');
-  
-  if (isSpreadTooWide(optionDetails.best_bid_price, optionDetails.best_ask_price, spreadRatioThreshold)) {
+  const spreadTickThreshold = parseInt(process.env.SPREAD_TICK_MULTIPLE_THRESHOLD || '2', 10);
+
+  // 使用新的综合价差判断逻辑
+  const { isSpreadReasonable } = await import('../utils/spread-calculation');
+  const isReasonable = isSpreadReasonable(
+    optionDetails.best_bid_price,
+    optionDetails.best_ask_price,
+    instrumentInfo.tick_size,
+    spreadRatioThreshold,
+    spreadTickThreshold
+  );
+
+  console.log(`价差检查: 比率=${formatSpreadRatioAsPercentage(spreadRatio)}, 步进倍数=${((optionDetails.best_ask_price - optionDetails.best_bid_price) / instrumentInfo.tick_size).toFixed(1)}, 合理=${isReasonable}`);
+
+  if (!isReasonable) {
     return await handleWideSpreadOrder(instrumentName, params, finalQuantity, finalPrice, spreadRatio, optionDetails, tokenInfo.accessToken, dependencies);
   } else {
     return await handleNarrowSpreadOrder(instrumentName, params, finalQuantity, finalPrice, spreadRatio, instrumentInfo, optionDetails, tokenInfo.accessToken, dependencies);

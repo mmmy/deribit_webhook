@@ -1,11 +1,11 @@
 import { DeribitPrivateAPI, createAuthInfo, getConfigByEnvironment } from '../api';
 import { DeltaRecordType } from '../database/types';
 import {
-  ConfigLoader,
-  DeltaManager,
-  DeribitAuth,
-  DeribitClient,
-  MockDeribitClient
+    ConfigLoader,
+    DeltaManager,
+    DeribitAuth,
+    DeribitClient,
+    MockDeribitClient
 } from '../services';
 import { executePositionAdjustment } from '../services/position-adjustment';
 import { WeChatNotificationService } from '../services/wechat-notification';
@@ -237,6 +237,7 @@ export class PositionPollingService {
 
       const processedOrders = [];
       const spreadRatioThreshold = parseFloat(process.env.SPREAD_RATIO_THRESHOLD || '0.15');
+      const spreadTickThreshold = parseInt(process.env.SPREAD_TICK_MULTIPLE_THRESHOLD || '2', 10);
 
       // 3. 获取真实的未成交订单
       const isTestEnv = process.env.USE_TEST_ENVIRONMENT === 'true';
@@ -269,14 +270,29 @@ export class PositionPollingService {
             continue;
           }
 
-          // 4.3 计算价差比率
-          const { calculateSpreadRatio } = await import('../utils/spread-calculation');
+          // 4.3 获取合约信息以获取tick_size
+          const instrumentInfo = await this.deribitClient.getInstrument(realOrder.instrument_name);
+          if (!instrumentInfo) {
+            console.log(`❌ [${requestId}] Failed to get instrument details for ${realOrder.instrument_name}, skipping`);
+            continue;
+          }
+
+          // 4.4 使用综合价差判断逻辑
+          const { calculateSpreadRatio, isSpreadReasonable } = await import('../utils/spread-calculation');
           const spreadRatio = calculateSpreadRatio(optionDetails.best_bid_price, optionDetails.best_ask_price);
+          const isReasonable = isSpreadReasonable(
+            optionDetails.best_bid_price,
+            optionDetails.best_ask_price,
+            instrumentInfo.tick_size,
+            spreadRatioThreshold,
+            spreadTickThreshold
+          );
 
-          console.log(`📊 [${requestId}] Spread ratio for ${realOrder.instrument_name}: ${(spreadRatio * 100).toFixed(2)}% (threshold: ${(spreadRatioThreshold * 100).toFixed(2)}%)`);
+          const tickMultiple = ((optionDetails.best_ask_price - optionDetails.best_bid_price) / instrumentInfo.tick_size).toFixed(1);
+          console.log(`📊 [${requestId}] Spread check for ${realOrder.instrument_name}: ratio=${(spreadRatio * 100).toFixed(2)}% (≤${(spreadRatioThreshold * 100).toFixed(2)}%), tick_multiple=${tickMultiple} (≤${spreadTickThreshold}), reasonable=${isReasonable}`);
 
-          // 4.4 如果价差在阈值内，执行渐进式策略
-          if (spreadRatio <= spreadRatioThreshold) {
+          // 4.5 如果价差合理，执行渐进式策略
+          if (isReasonable) {
             const progressResult = await this.executeProgressiveStrategyForOrder(orderRecord, realOrder, tokenInfo.accessToken, requestId);
             if (progressResult.success) {
               processedOrders.push({
@@ -287,7 +303,7 @@ export class PositionPollingService {
               });
             }
           } else {
-            console.log(`📊 [${requestId}] Spread too wide for ${realOrder.instrument_name}, skipping progressive strategy`);
+            console.log(`📊 [${requestId}] Spread too wide for ${realOrder.instrument_name}, skipping progressive strategy (ratio=${(spreadRatio * 100).toFixed(2)}%, tick_multiple=${tickMultiple})`);
           }
 
         } catch (orderError) {

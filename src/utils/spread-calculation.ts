@@ -78,8 +78,33 @@ export function formatSpreadRatioAsPercentage(spreadRatio: number, decimals: num
 }
 
 /**
- * 判断价差是否过大
- * 
+ * 计算价差步进倍数
+ *
+ * 步进倍数 = (卖1价 - 买1价) / 价格最小步进
+ *
+ * @param bidPrice 买1价
+ * @param askPrice 卖1价
+ * @param tickSize 价格最小步进
+ * @returns 价差步进倍数，如果参数无效则返回Infinity
+ */
+export function calculateSpreadTickMultiple(bidPrice: number, askPrice: number, tickSize: number): number {
+  // 验证参数有效性
+  if (!bidPrice || !askPrice || !tickSize || bidPrice <= 0 || askPrice <= 0 || tickSize <= 0) {
+    return Infinity; // 返回无穷大，表示价差极大
+  }
+
+  // 检查价格合理性
+  if (bidPrice > askPrice) {
+    return Infinity; // 异常情况
+  }
+
+  const absoluteSpread = askPrice - bidPrice;
+  return absoluteSpread / tickSize;
+}
+
+/**
+ * 判断价差是否过大（基于比率阈值）
+ *
  * @param bidPrice 买1价
  * @param askPrice 卖1价
  * @param threshold 价差比率阈值，默认0.15 (15%)
@@ -88,6 +113,44 @@ export function formatSpreadRatioAsPercentage(spreadRatio: number, decimals: num
 export function isSpreadTooWide(bidPrice: number, askPrice: number, threshold: number = 0.15): boolean {
   const spreadRatio = calculateSpreadRatio(bidPrice, askPrice);
   return spreadRatio > threshold;
+}
+
+/**
+ * 判断价差是否过大（基于步进倍数阈值）
+ *
+ * @param bidPrice 买1价
+ * @param askPrice 卖1价
+ * @param tickSize 价格最小步进
+ * @param threshold 步进倍数阈值，默认2
+ * @returns true表示价差过大，false表示价差合理
+ */
+export function isSpreadTooWideByTicks(bidPrice: number, askPrice: number, tickSize: number, threshold: number = 2): boolean {
+  const tickMultiple = calculateSpreadTickMultiple(bidPrice, askPrice, tickSize);
+  return tickMultiple > threshold;
+}
+
+/**
+ * 综合判断价差是否合理（满足任一条件即可）
+ *
+ * @param bidPrice 买1价
+ * @param askPrice 卖1价
+ * @param tickSize 价格最小步进
+ * @param ratioThreshold 价差比率阈值，默认0.15 (15%)
+ * @param tickThreshold 步进倍数阈值，默认2
+ * @returns true表示价差合理，false表示价差过大
+ */
+export function isSpreadReasonable(
+  bidPrice: number,
+  askPrice: number,
+  tickSize: number,
+  ratioThreshold: number = 0.15,
+  tickThreshold: number = 2
+): boolean {
+  // 满足任一条件即认为价差合理
+  const ratioOk = !isSpreadTooWide(bidPrice, askPrice, ratioThreshold);
+  const tickOk = !isSpreadTooWideByTicks(bidPrice, askPrice, tickSize, tickThreshold);
+
+  return ratioOk || tickOk;
 }
 
 /**
@@ -118,23 +181,53 @@ export interface SpreadInfo {
   midPrice: number;
   qualityDescription: string;
   formattedRatio: string;
+  tickSize?: number;                     // 价格最小步进
+  tickMultiple?: number;                 // 价差步进倍数
+  isReasonableByRatio?: boolean;         // 基于比率是否合理
+  isReasonableByTicks?: boolean;         // 基于步进是否合理
+  isReasonableOverall?: boolean;         // 综合是否合理
 }
 
 /**
  * 获取完整的价差信息
- * 
+ *
  * @param bidPrice 买1价
  * @param askPrice 卖1价
+ * @param tickSize 价格最小步进（可选）
+ * @param ratioThreshold 价差比率阈值（可选）
+ * @param tickThreshold 步进倍数阈值（可选）
  * @returns 完整的价差信息对象
  */
-export function getSpreadInfo(bidPrice: number, askPrice: number): SpreadInfo {
-  return {
+export function getSpreadInfo(
+  bidPrice: number,
+  askPrice: number,
+  tickSize?: number,
+  ratioThreshold?: number,
+  tickThreshold?: number
+): SpreadInfo {
+  const spreadRatio = calculateSpreadRatio(bidPrice, askPrice);
+  const info: SpreadInfo = {
     bidPrice,
     askPrice,
     absoluteSpread: calculateAbsoluteSpread(bidPrice, askPrice),
-    spreadRatio: calculateSpreadRatio(bidPrice, askPrice),
+    spreadRatio,
     midPrice: calculateMidPrice(bidPrice, askPrice),
     qualityDescription: getSpreadQualityDescription(bidPrice, askPrice),
-    formattedRatio: formatSpreadRatioAsPercentage(calculateSpreadRatio(bidPrice, askPrice))
+    formattedRatio: formatSpreadRatioAsPercentage(spreadRatio)
   };
+
+  // 如果提供了tickSize，计算相关信息
+  if (tickSize !== undefined && tickSize > 0) {
+    const tickMultiple = calculateSpreadTickMultiple(bidPrice, askPrice, tickSize);
+    const ratioThresh = ratioThreshold || 0.15;
+    const tickThresh = tickThreshold || 2;
+
+    info.tickSize = tickSize;
+    info.tickMultiple = tickMultiple;
+    info.isReasonableByRatio = !isSpreadTooWide(bidPrice, askPrice, ratioThresh);
+    info.isReasonableByTicks = !isSpreadTooWideByTicks(bidPrice, askPrice, tickSize, tickThresh);
+    info.isReasonableOverall = isSpreadReasonable(bidPrice, askPrice, tickSize, ratioThresh, tickThresh);
+  }
+
+  return info;
 }

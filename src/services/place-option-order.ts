@@ -6,16 +6,16 @@
 import { ConfigLoader } from '../config';
 import { OptionTradingParams, OptionTradingResult } from '../types';
 import { correctOrderParameters, correctOrderPrice } from '../utils/price-correction';
-import { calculateSpreadRatio, formatSpreadRatioAsPercentage } from '../utils/spread-calculation';
+import { calculateSpreadRatio, calculateSpreadTickMultiple, formatSpreadRatioAsPercentage } from '../utils/spread-calculation';
 import { DeribitAuth } from './auth';
 import { DeribitClient } from './deribit-client';
 import { MockDeribitClient } from './mock-deribit';
 import {
-    handleNonImmediateOrder as handleNonImmediateOrderPure,
-    OrderNotificationInfo,
-    OrderSupportDependencies,
-    recordPositionInfoToDatabase as recordPositionInfoToDatabasePure,
-    sendOrderNotification as sendOrderNotificationPure
+  handleNonImmediateOrder as handleNonImmediateOrderPure,
+  OrderNotificationInfo,
+  OrderSupportDependencies,
+  recordPositionInfoToDatabase as recordPositionInfoToDatabasePure,
+  sendOrderNotification as sendOrderNotificationPure
 } from './order-support-functions';
 
 // 依赖注入接口
@@ -151,7 +151,7 @@ async function handleRealOrder(
   console.log(`价差检查: 比率=${formatSpreadRatioAsPercentage(spreadRatio)}, 步进倍数=${((optionDetails.best_ask_price - optionDetails.best_bid_price) / instrumentInfo.tick_size).toFixed(1)}, 合理=${isReasonable}`);
 
   if (!isReasonable) {
-    return await handleWideSpreadOrder(instrumentName, params, finalQuantity, finalPrice, spreadRatio, optionDetails, tokenInfo.accessToken, dependencies);
+    return await handleWideSpreadOrder(instrumentName, params, finalQuantity, finalPrice, spreadRatio, instrumentInfo, optionDetails, tokenInfo.accessToken, dependencies);
   } else {
     return await handleNarrowSpreadOrder(instrumentName, params, finalQuantity, finalPrice, spreadRatio, instrumentInfo, optionDetails, tokenInfo.accessToken, dependencies);
   }
@@ -217,6 +217,7 @@ async function handleWideSpreadOrder(
   finalQuantity: number,
   finalPrice: number,
   spreadRatio: number,
+  instrumentInfo: any,
   optionDetails: any,
   accessToken: string,
   dependencies: PlaceOrderDependencies
@@ -238,6 +239,9 @@ async function handleWideSpreadOrder(
   const spreadPercentage = (spreadRatio * 100).toFixed(1);
   const extraMsg = `盘口价差过大: ${spreadPercentage}%`;
 
+  // 计算步进倍数信息
+  const tickMultiple = calculateSpreadTickMultiple(optionDetails.best_bid_price, optionDetails.best_ask_price, instrumentInfo.tick_size);
+
   const orderInfo: OrderNotificationInfo = {
     instrumentName,
     direction: orderResult.order?.direction,
@@ -250,7 +254,10 @@ async function handleWideSpreadOrder(
     success: true,
     extraMsg: extraMsg,
     bestBidPrice: optionDetails.best_bid_price,
-    bestAskPrice: optionDetails.best_ask_price
+    bestAskPrice: optionDetails.best_ask_price,
+    tickSize: instrumentInfo.tick_size,
+    spreadRatio: spreadRatio,
+    tickMultiple: tickMultiple
   };
 
   await sendOrderNotificationPure(params.accountName, orderInfo, dependencies.orderSupportDependencies);
@@ -327,6 +334,7 @@ async function handleNarrowSpreadOrder(
 
     // 发送成功通知到企业微信
     const spreadPercentage = (spreadRatio * 100).toFixed(1);
+    const tickMultiple = calculateSpreadTickMultiple(optionDetails.best_bid_price, optionDetails.best_ask_price, instrumentInfo.tick_size);
     const extraMsg = `盘口价差: ${spreadPercentage}% (渐进式策略)`;
 
     const orderInfo: OrderNotificationInfo = {
@@ -341,7 +349,10 @@ async function handleNarrowSpreadOrder(
       success: true,
       extraMsg: extraMsg,
       bestBidPrice: optionDetails.best_bid_price,
-      bestAskPrice: optionDetails.best_ask_price
+      bestAskPrice: optionDetails.best_ask_price,
+      tickSize: instrumentInfo.tick_size,
+      spreadRatio: spreadRatio,
+      tickMultiple: tickMultiple
     };
 
     await sendOrderNotificationPure(params.accountName, orderInfo, dependencies.orderSupportDependencies);
@@ -361,6 +372,7 @@ async function handleNarrowSpreadOrder(
 
     // 发送失败通知到企业微信
     const spreadPercentage = (spreadRatio * 100).toFixed(1);
+    const tickMultiple = calculateSpreadTickMultiple(optionDetails.best_bid_price, optionDetails.best_ask_price, instrumentInfo.tick_size);
     const extraMsg = `盘口价差: ${spreadPercentage}% (渐进式策略失败)`;
 
     const orderInfo: OrderNotificationInfo = {
@@ -375,7 +387,10 @@ async function handleNarrowSpreadOrder(
       success: false,
       extraMsg: extraMsg,
       bestBidPrice: optionDetails.best_bid_price,
-      bestAskPrice: optionDetails.best_ask_price
+      bestAskPrice: optionDetails.best_ask_price,
+      tickSize: instrumentInfo.tick_size,
+      spreadRatio: spreadRatio,
+      tickMultiple: tickMultiple
     };
 
     await sendOrderNotificationPure(params.accountName, orderInfo, dependencies.orderSupportDependencies);

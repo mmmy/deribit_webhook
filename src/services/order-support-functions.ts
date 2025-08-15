@@ -29,6 +29,9 @@ export interface OrderNotificationInfo {
   extraMsg?: string;
   bestBidPrice?: number;
   bestAskPrice?: number;
+  tickSize?: number;                     // 价格最小步进
+  spreadRatio?: number;                  // 价差比率
+  tickMultiple?: number;                 // 价差步进倍数
 }
 
 /**
@@ -202,12 +205,28 @@ export async function sendOrderNotification(
     const directionText = orderInfo.direction === 'buy' ? '买入' : '卖出';
     const orderStateText = getOrderStateText(orderInfo.orderState);
 
+    // 构建盘口信息
+    let marketInfo = '';
+    if (orderInfo.bestBidPrice !== undefined && orderInfo.bestAskPrice !== undefined) {
+      marketInfo = ` | 买1: $${orderInfo.bestBidPrice} 卖1: $${orderInfo.bestAskPrice}`;
+
+      // 添加价差信息
+      if (orderInfo.spreadRatio !== undefined) {
+        marketInfo += `\n📊 价差比率: ${(orderInfo.spreadRatio * 100).toFixed(2)}%`;
+      }
+
+      // 添加步进倍数信息
+      if (orderInfo.tickMultiple !== undefined && orderInfo.tickSize !== undefined) {
+        marketInfo += ` | 步进倍数: ${orderInfo.tickMultiple.toFixed(1)} (步长: ${orderInfo.tickSize})`;
+      }
+    }
+
     const notificationContent = `${statusIcon} **期权交易${statusText}**
 
 👤 账户: ${accountName}
 🎯 合约: ${orderInfo.instrumentName}
 📊 操作: ${directionText} ${orderInfo.quantity} 张
-💰 价格: $${orderInfo.price}${orderInfo.bestBidPrice !== undefined && orderInfo.bestAskPrice !== undefined ? ` | 买1: $${orderInfo.bestBidPrice} 卖1: $${orderInfo.bestAskPrice}` : ''}
+💰 价格: $${orderInfo.price}${marketInfo}
 🆔 订单ID: ${orderInfo.orderId}
 📈 状态: ${orderStateText}
 ${orderInfo.extraMsg ? `ℹ️ ${orderInfo.extraMsg}` : ''}

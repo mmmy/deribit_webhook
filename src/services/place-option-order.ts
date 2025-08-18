@@ -408,6 +408,70 @@ async function handleNarrowSpreadOrder(
 }
 
 /**
+ * 提取详细的错误信息
+ */
+function extractDetailedErrorMessage(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return 'Unknown error';
+  }
+
+  let errorMsg = error.message;
+
+  // 检查是否有 Axios 响应错误
+  if ((error as any).response?.data) {
+    const responseData = (error as any).response.data;
+
+    // 检查 Deribit API 错误格式
+    if (responseData.error) {
+      const deribitError = responseData.error;
+      if (deribitError.message) {
+        errorMsg = deribitError.message;
+
+        // 添加错误代码（如果有）
+        if (deribitError.code) {
+          errorMsg += ` (代码: ${deribitError.code})`;
+        }
+
+        // 翻译常见的 Deribit 错误消息
+        const errorTranslations: { [key: string]: string } = {
+          'not_enough_funds': '资金不足',
+          'invalid_instrument_name': '无效的合约名称',
+          'invalid_quantity': '无效的数量',
+          'invalid_price': '无效的价格',
+          'order_not_found': '订单未找到',
+          'instrument_not_found': '合约未找到',
+          'insufficient_funds': '资金不足',
+          'position_not_found': '仓位未找到',
+          'invalid_direction': '无效的交易方向',
+          'market_closed': '市场已关闭',
+          'price_too_high': '价格过高',
+          'price_too_low': '价格过低',
+          'quantity_too_small': '数量过小',
+          'quantity_too_large': '数量过大'
+        };
+
+        const translatedMsg = errorTranslations[deribitError.message];
+        if (translatedMsg) {
+          errorMsg = `${translatedMsg} (${deribitError.message})`;
+          if (deribitError.code) {
+            errorMsg += ` (代码: ${deribitError.code})`;
+          }
+        }
+      }
+    }
+    // 检查其他可能的错误格式
+    else if (responseData.message) {
+      errorMsg = responseData.message;
+    }
+    else if (typeof responseData === 'string') {
+      errorMsg = responseData;
+    }
+  }
+
+  return errorMsg;
+}
+
+/**
  * 处理订单错误
  */
 async function handleOrderError(
@@ -427,8 +491,8 @@ async function handleOrderError(
     }
   }
 
-  // 发送错误通知到企业微信
-  const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+  // 提取详细的错误信息
+  const detailedErrorMsg = extractDetailedErrorMessage(error);
 
   const orderInfo: OrderNotificationInfo = {
     instrumentName,
@@ -440,7 +504,7 @@ async function handleOrderError(
     filledAmount: 0,
     averagePrice: 0,
     success: false,
-    extraMsg: `错误: ${errorMsg}`,
+    extraMsg: `错误: ${detailedErrorMsg}`,
     bestBidPrice: undefined,
     bestAskPrice: undefined
   };
@@ -450,6 +514,6 @@ async function handleOrderError(
   return {
     success: false,
     message: 'Failed to place option order',
-    error: error instanceof Error ? error.message : 'Unknown error'
+    error: detailedErrorMsg
   };
 }

@@ -106,7 +106,7 @@ export async function executePositionAdjustment(
     console.log(`🎯 [${requestId}] Selected new instrument: ${deltaResult.instrument.instrument_name}`);
 
     // 2. 平掉当前仓位
-    const closeDirection = currentPosition.size > 0 ? 'sell' : 'buy';
+    const closeDirection = currentPosition.direction === 'buy' ? 'sell' : 'buy';
     const closeQuantity = Math.abs(currentPosition.size);
 
     console.log(`📉 [${requestId}] Closing current position: ${closeDirection} ${closeQuantity} contracts of ${currentPosition.instrument_name}`);
@@ -138,7 +138,7 @@ export async function executePositionAdjustment(
 
     // 3. 开新仓位
     // 根据move_position_delta确定新仓位方向：正值买入，负值卖出
-    const newDirection = deltaRecord.move_position_delta > 0 ? 'buy' : 'sell';
+    const newDirection = currentPosition.direction;
     const newQuantity = Math.abs(currentPosition.size);
     const instrumentName = deltaResult.instrument.instrument_name
     console.log(`📈 [${requestId}] Opening new position: ${newDirection} ${newQuantity} contracts of ${deltaResult.instrument.instrument_name}`);

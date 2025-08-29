@@ -316,6 +316,12 @@ export class DeribitClient {
           }
         }
 
+        // 打印所有期权的delta和买一卖一价格信息
+        // console.log(`📊 Options with Delta for expiry ${new Date(expiryTimestamp).toLocaleDateString()}:`);
+        optionsWithDelta.forEach((option, index) => {
+          console.log(`  ${index + 1}. ${option.instrument.instrument_name}: Delta: ${option.details.greeks.delta.toFixed(4)}, Best Bid: ${option.details.best_bid_price}, Best Ask: ${option.details.best_ask_price}`);
+        });
+
         // 排序并选择前2个
         optionsWithDelta.sort((a, b) => a.deltaDistance - b.deltaDistance);
         const top2ForExpiry = optionsWithDelta.slice(0, 2);

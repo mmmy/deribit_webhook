@@ -497,14 +497,14 @@ async function handleOrderError(
   const orderInfo: OrderNotificationInfo = {
     instrumentName,
     direction: params.direction,
-    quantity: params.quantity,
-    price: params.price || 0,
+    quantity: 0, // 错误时没有实际期权订单数量
+    price: 0, // 错误时没有实际期权订单价格
     orderId: 'N/A',
     orderState: 'error',
     filledAmount: 0,
     averagePrice: 0,
     success: false,
-    extraMsg: `错误: ${detailedErrorMsg}`,
+    extraMsg: `错误: ${detailedErrorMsg} | 原始信号 - 数量:${params.quantity}, 价格:${params.price || 'market'}, 动作:${params.action}, delta1:${params.delta1 || 'N/A'}, delta2:${params.delta2 || 'N/A'}, n:${params.n || 'N/A'}`,
     bestBidPrice: undefined,
     bestAskPrice: undefined
   };

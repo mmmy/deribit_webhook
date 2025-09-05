@@ -421,6 +421,63 @@
             100% { transform: scale(1); }
         }
 
+        /* 右上角弹出提醒样式 */
+        .copy-notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #fff3cd;
+            border: 2px solid #ffc107;
+            border-radius: 8px;
+            padding: 15px 20px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 3000;
+            max-width: 350px;
+            opacity: 0;
+            transform: translateX(100%);
+            transition: all 0.3s ease-in-out;
+        }
+
+        .copy-notification.show {
+            opacity: 1;
+            transform: translateX(0);
+        }
+
+        .copy-notification-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+            font-weight: bold;
+            color: #856404;
+        }
+
+        .copy-notification-content {
+            color: #856404;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+
+        .copy-notification-close {
+            position: absolute;
+            top: 8px;
+            right: 12px;
+            background: none;
+            border: none;
+            font-size: 18px;
+            color: #856404;
+            cursor: pointer;
+            padding: 0;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .copy-notification-close:hover {
+            color: #533f03;
+        }
+
         /* 警报消息模态框样式 */
         .alert-modal {
             display: none;
@@ -2101,9 +2158,32 @@
             document.getElementById('alertModal').style.display = 'none';
         }
 
+        // 显示右上角复制提醒
+        function showCopyNotification() {
+            const notification = document.getElementById('copyNotification');
+            if (notification) {
+                notification.classList.add('show');
+
+                // 10秒后自动关闭
+                setTimeout(() => {
+                    closeCopyNotification();
+                }, 10000);
+            }
+        }
+
+        // 关闭右上角复制提醒
+        function closeCopyNotification() {
+            const notification = document.getElementById('copyNotification');
+            if (notification) {
+                notification.classList.remove('show');
+            }
+        }
+
         // 确保函数在全局作用域中可用
         window.closeAlertModal = closeAlertModal;
         window.copyAlertMessage = copyAlertMessage;
+        window.showCopyNotification = showCopyNotification;
+        window.closeCopyNotification = closeCopyNotification;
 
         async function copyAlertMessage() {
             console.log('copyAlertMessage function called');
@@ -2149,6 +2229,12 @@
 
                 showSuccess(`警报消息已复制到剪贴板 (TV_ID: ${tvId})`);
 
+                // 显示右上角提醒
+                showCopyNotification();
+
+                // 显示右上角提醒
+                showCopyNotification();
+
             } catch (err) {
                 console.log('Clipboard API failed, trying fallback method:', err);
 
@@ -2167,6 +2253,9 @@
                     if (successful) {
                         console.log('Fallback copy successful');
                         showSuccess(`警报消息已复制到剪贴板 (TV_ID: ${tvId})`);
+
+                        // 显示右上角提醒
+                        showCopyNotification();
                     } else {
                         throw new Error('execCommand failed');
                     }
@@ -2257,6 +2346,20 @@
                 <div id="alertMessageContent"></div>
             </div>
 
+            <!-- 重要提醒框 -->
+            <div style="background: #fff3cd; border: 2px solid #ffc107; border-radius: 6px; padding: 15px; margin-top: 15px;">
+                <h4 style="margin: 0 0 10px 0; color: #856404; display: flex; align-items: center;">
+                    ⚠️ 重要提醒：品种选择注意事项
+                </h4>
+                <div style="color: #856404; font-weight: bold; margin-bottom: 10px;">
+                    <p style="margin: 5px 0;">• <strong>xx<span style="font-size: 18px; font-weight: bold; color: #dc3545;">USDC</span>品种</strong>：用来交易<span style="font-size: 18px; font-weight: bold; color: #dc3545;">USDC</span>期权（现金结算）</p>
+                    <p style="margin: 5px 0;">• <strong>xx<span style="font-size: 18px; font-weight: bold; color: #dc3545;">USDT</span>品种</strong>：用来交易币本位期权（实物结算）</p>
+                </div>
+                <p style="margin: 0; color: #856404; font-size: 13px;">
+                    请根据您的交易需求选择正确的品种，避免因品种选择错误导致的交易问题。
+                </p>
+            </div>
+
             <div style="background: #e8f4fd; border: 1px solid #bee5eb; border-radius: 6px; padding: 15px; margin-top: 15px;">
                 <h4 style="margin: 0 0 10px 0; color: #0c5460;">📝 使用说明：</h4>
                 <ul style="margin: 0; padding-left: 20px; color: #0c5460;">
@@ -2278,6 +2381,20 @@
                     关闭
                 </button>
             </div>
+        </div>
+    </div>
+
+    <!-- 右上角复制提醒 -->
+    <div id="copyNotification" class="copy-notification">
+        <button class="copy-notification-close" onclick="closeCopyNotification()">&times;</button>
+        <div class="copy-notification-header">
+            ⚠️ 品种提醒
+        </div>
+        <div class="copy-notification-content">
+            <strong>品种选择注意事项：</strong><br>
+            • xx<span style="font-size: 16px; font-weight: bold; color: #d63384;">USDC</span>品种：用来交易<span style="font-size: 16px; font-weight: bold; color: #d63384;">USDC</span>期权<br>
+            • xx<span style="font-size: 16px; font-weight: bold; color: #d63384;">USDT</span>品种：用来交易币本位期权<br>
+            <small style="color: #6c757d;">请根据需求选择正确品种</small>
         </div>
     </div>
 

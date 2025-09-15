@@ -1,11 +1,11 @@
 import { DeribitPrivateAPI, createAuthInfo, getConfigByEnvironment } from '../api';
 import { DeltaRecordType } from '../database/types';
 import {
-    ConfigLoader,
-    DeltaManager,
-    DeribitAuth,
-    DeribitClient,
-    MockDeribitClient
+  ConfigLoader,
+  DeltaManager,
+  DeribitAuth,
+  DeribitClient,
+  MockDeribitClient
 } from '../services';
 import { executePositionAdjustment } from '../services/position-adjustment';
 import { WeChatNotificationService } from '../services/wechat-notification';
@@ -90,6 +90,9 @@ export class PositionPollingService {
             if (positionsData.success && positionsData.data) {
               // Analyze positions for delta adjustments
               await this.analyzePositionsForAdjustment(positionsData.data, account.name, requestId);
+
+              // Check for high ROI sell positions that need to be closed
+              this.checkHighROISellPositions(positionsData.data, account.name, requestId);
             }
 
             results.push(positionsData);
@@ -556,6 +559,87 @@ export class PositionPollingService {
   }
 
   /**
+   * Check for high ROI sell positions that need to be closed
+   * If position is option, direction=sell, and ROI>85%, close the position
+   */
+  private async checkHighROISellPositions(positions: any[], accountName: string, requestId: string): Promise<void> {
+    const ROI_THRESHOLD = 0.85; // 85% ROI threshold
+
+    for (const pos of positions) {
+      try {
+        // Check if position is an option
+        if (pos.kind !== 'option') {
+          continue;
+        }
+
+        // Check if direction is sell
+        if (pos.direction !== 'sell') {
+          continue;
+        }
+
+        // Calculate ROI: ((mark_price - average_price) / average_price) * 100
+        // For sell positions, ROI should be negative (we want the option price to decrease)
+        if (typeof pos.average_price !== 'number' || typeof pos.mark_price !== 'number' || pos.average_price === 0) {
+          continue;
+        }
+
+        let roi = ((pos.mark_price - pos.average_price) / pos.average_price);
+        // For sell positions, ROI is inverted (we profit when price decreases)
+        roi = -roi;
+
+        console.log(`📊 [${requestId}] ROI Check - ${accountName}:`);
+        console.log(`   🎯 Instrument: ${pos.instrument_name}`);
+        console.log(`   📈 Direction: ${pos.direction}`);
+        console.log(`   💰 Average Price: ${pos.average_price}`);
+        console.log(`   📊 Mark Price: ${pos.mark_price}`);
+        console.log(`   📈 ROI: ${(roi * 100).toFixed(2)}%`);
+
+        // Check if ROI exceeds threshold
+        if (roi > ROI_THRESHOLD) {
+          console.log(`🚨 [${requestId}] High ROI detected for ${pos.instrument_name}: ${(roi * 100).toFixed(2)}% > ${(ROI_THRESHOLD * 100)}%`);
+
+          // Get access token
+          const tokenInfo = this.deribitAuth.getTokenInfo(accountName);
+          if (!tokenInfo) {
+            console.error(`❌ [${requestId}] No access token found for ${accountName}`);
+            continue;
+          }
+
+          // Send notification before closing
+          await this.sendHighROICloseNotification(accountName, pos, roi, requestId);
+
+          // Execute position close
+          const { executePositionClose } = await import('../services/position-adjustment');
+          const closeResult = await executePositionClose(
+            {
+              requestId: `${requestId}_high_roi_close`,
+              accountName,
+              currentPosition: pos,
+              // deltaRecord removed - high ROI close doesn't need to delete delta records
+              accessToken: tokenInfo.accessToken,
+              closeRatio: 1.0, // Close entire position
+              isMarketOrder: false // Use limit order with progressive strategy
+            },
+            {
+              deribitClient: this.deribitClient,
+              deltaManager: this.deltaManager,
+              deribitAuth: this.deribitAuth
+            }
+          );
+
+          // Send result notification
+          await this.sendHighROICloseResultNotification(accountName, pos, roi, closeResult, requestId);
+
+          console.log(`✅ [${requestId}] High ROI close executed for ${pos.instrument_name}:`, closeResult.success ? 'SUCCESS' : 'FAILED');
+        }
+
+      } catch (posError) {
+        console.warn(`⚠️ [${requestId}] Failed to check ROI for position ${pos.instrument_name}:`, posError);
+      }
+    }
+  }
+
+  /**
    * Send adjustment start notification to WeChat
    */
   private async sendAdjustmentNotification(accountName: string, position: any, record: any, requestId: string): Promise<void> {
@@ -625,6 +709,63 @@ ${result.error ? `📋 **错误详情**: ${result.error}` : ''}
       }
     } catch (error) {
       console.error(`❌ [${requestId}] Failed to send result notification for account ${accountName}:`, error);
+    }
+  }
+
+  /**
+   * Send high ROI close notification to WeChat
+   */
+  private async sendHighROICloseNotification(accountName: string, position: any, roi: number, requestId: string): Promise<void> {
+    try {
+      const bot = this.configLoader.getAccountWeChatBot(accountName);
+      if (bot) {
+        const notificationContent = `🚨 **高ROI平仓通知**
+👤 **账户**: ${accountName}
+🎯 **合约**: ${position.instrument_name}
+📈 **仓位方向**: ${position.direction}
+📊 **仓位大小**: ${position.size}
+💰 **平均价格**: ${position.average_price}
+📊 **标记价格**: ${position.mark_price}
+📈 **ROI**: ${(roi * 100).toFixed(2)}%
+⚠️ **触发阈值**: 85%
+🔄 **操作**: 即将执行平仓
+🔄 **请求ID**: ${requestId}
+
+> 检测到高ROI卖出期权仓位，系统将自动执行平仓操作`;
+
+        await bot.sendMarkdown(notificationContent);
+        console.log(`📱 [${requestId}] High ROI close notification sent for account: ${accountName}`);
+      }
+    } catch (error) {
+      console.error(`❌ [${requestId}] Failed to send high ROI close notification for account ${accountName}:`, error);
+    }
+  }
+
+  /**
+   * Send high ROI close result notification to WeChat
+   */
+  private async sendHighROICloseResultNotification(accountName: string, position: any, roi: number, closeResult: any, requestId: string): Promise<void> {
+    try {
+      const bot = this.configLoader.getAccountWeChatBot(accountName);
+      if (bot) {
+        const statusEmoji = closeResult.success ? '✅' : '❌';
+        const statusText = closeResult.success ? '成功' : '失败';
+
+        const notificationContent = `${statusEmoji} **高ROI平仓结果**
+👤 **账户**: ${accountName}
+🎯 **合约**: ${position.instrument_name}
+📈 **ROI**: ${(roi * 100).toFixed(2)}%
+🔄 **平仓状态**: ${statusText}
+${closeResult.message ? `📝 **详情**: ${closeResult.message}` : ''}
+🔄 **请求ID**: ${requestId}
+
+> 高ROI平仓操作已完成`;
+
+        await bot.sendMarkdown(notificationContent);
+        console.log(`📱 [${requestId}] High ROI close result notification sent for account: ${accountName}, status: ${statusText}`);
+      }
+    } catch (error) {
+      console.error(`❌ [${requestId}] Failed to send high ROI close result notification for account ${accountName}:`, error);
     }
   }
 }

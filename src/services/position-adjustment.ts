@@ -383,7 +383,7 @@ export async function executePositionClose(
     requestId: string;
     accountName: string;
     currentPosition: DeribitPosition;
-    deltaRecord: DeltaRecord;
+    deltaRecord?: DeltaRecord;
     accessToken: string;
     closeRatio: number;
     isMarketOrder?: boolean;
@@ -539,11 +539,13 @@ export async function executePositionClose(
 
     console.log(`✅ [${requestId}] Position closed successfully: ${closeResult.order.order_id}`);
 
-    // 如果是全平(closeRatio = 1)，删除Delta记录
+    // 如果是全平(closeRatio = 1)且有Delta记录，删除Delta记录
     let deltaRecordDeleted = false;
-    if (closeRatio === 1) {
-      deltaRecordDeleted = deltaManager.deleteRecord(deltaRecord.id!);
+    if (closeRatio === 1 && deltaRecord && deltaRecord.id) {
+      deltaRecordDeleted = deltaManager.deleteRecord(deltaRecord.id);
       console.log(`🗑️ [${requestId}] Delta record deletion: ${deltaRecordDeleted ? 'success' : 'failed'} (ID: ${deltaRecord.id})`);
+    } else if (closeRatio === 1) {
+      console.log(`📝 [${requestId}] Full close completed, but no delta record to delete`);
     } else {
       console.log(`📝 [${requestId}] Partial close (${(closeRatio * 100).toFixed(1)}%), keeping delta record`);
     }

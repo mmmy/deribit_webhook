@@ -1314,13 +1314,18 @@
                 }
 
                 // 计算ROI：从实时仓位数据中获取价格信息
+                // 如果是sell方向，ROI需要取负值
                 let roiHtml = '-';
                 if (livePosition) {
                     const avgPrice = livePosition.average_price || livePosition.average_price_usd || 0;
                     const markPrice = livePosition.mark_price || 0;
 
                     if (typeof avgPrice === 'number' && typeof markPrice === 'number' && avgPrice !== 0) {
-                        const roi = ((markPrice - avgPrice) / avgPrice) * 100;
+                        let roi = ((markPrice - avgPrice) / avgPrice) * 100;
+                        // 如果是sell方向，ROI取负值
+                        if (livePosition.direction === 'sell') {
+                            roi = -roi;
+                        }
                         const roiClass = roi >= 0 ? 'delta-positive' : 'delta-negative';
                         roiHtml = `<span class="${roiClass}">${roi.toFixed(2)}%</span>`;
                     }
@@ -1441,9 +1446,14 @@
                 }
 
                 // 计算ROI：((标记价格 - 平均价格) / 平均价格) * 100
+                // 如果是sell方向，ROI需要取负值
                 let roiHtml = '-';
                 if (typeof avgPrice === 'number' && typeof markPrice === 'number' && avgPrice !== 0) {
-                    const roi = ((markPrice - avgPrice) / avgPrice) * 100;
+                    let roi = ((markPrice - avgPrice) / avgPrice) * 100;
+                    // 如果是sell方向，ROI取负值
+                    if (position.direction === 'sell') {
+                        roi = -roi;
+                    }
                     const roiClass = roi >= 0 ? 'delta-positive' : 'delta-negative';
                     roiHtml = `<span class="${roiClass}">${roi.toFixed(2)}%</span>`;
                 }

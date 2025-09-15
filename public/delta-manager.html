@@ -678,9 +678,9 @@
                                     <th>移仓Delta</th>
                                     <th>最小到期天数</th>
                                     <th>Delta平均值</th>
+                                    <th>ROI</th>
                                     <th>TV_ID</th>
                                     <th>创建时间</th>
-                                    <th>更新时间</th>
                                     <th>操作</th>
                                 </tr>
                             </thead>
@@ -735,6 +735,7 @@
                                     <th>方向</th>
                                     <th>平均价格</th>
                                     <th>标记价格</th>
+                                    <th>ROI</th>
                                     <th>Delta值</th>
                                     <th>Delta平均值</th>
                                     <th>操作</th>
@@ -1312,6 +1313,19 @@
                     }
                 }
 
+                // 计算ROI：从实时仓位数据中获取价格信息
+                let roiHtml = '-';
+                if (livePosition) {
+                    const avgPrice = livePosition.average_price || livePosition.average_price_usd || 0;
+                    const markPrice = livePosition.mark_price || 0;
+
+                    if (typeof avgPrice === 'number' && typeof markPrice === 'number' && avgPrice !== 0) {
+                        const roi = ((markPrice - avgPrice) / avgPrice) * 100;
+                        const roiClass = roi >= 0 ? 'delta-positive' : 'delta-negative';
+                        roiHtml = `<span class="${roiClass}">${roi.toFixed(2)}%</span>`;
+                    }
+                }
+
                 // 查找对应的实际仓位数据以获取数量信息
                 const matchingPosition = livePositions.find(pos => pos.instrument_name === record.instrument_name);
                 const quantity = matchingPosition ? (matchingPosition.size || matchingPosition.amount || 0) : '-';
@@ -1324,9 +1338,9 @@
                     <td class="${(record.move_position_delta || 0) >= 0 ? 'delta-positive' : 'delta-negative'}">${(record.move_position_delta || 0).toFixed(4)}</td>
                     <td>${record.min_expire_days || '-'}</td>
                     <td>${deltaAverageHtml}</td>
+                    <td>${roiHtml}</td>
                     <td>${record.tv_id || '-'}</td>
                     <td>${new Date(record.created_at).toLocaleString()}</td>
-                    <td>${new Date(record.updated_at).toLocaleString()}</td>
                     <td>
                         <button class="btn btn-warning" data-action="edit" data-record-id="${record.id}">编辑</button>
                         <button class="btn btn-danger" data-action="delete" data-record-id="${record.id}">删除</button>
@@ -1426,12 +1440,21 @@
                     deltaAverage = delta / Math.abs(size);
                 }
 
+                // 计算ROI：((标记价格 - 平均价格) / 平均价格) * 100
+                let roiHtml = '-';
+                if (typeof avgPrice === 'number' && typeof markPrice === 'number' && avgPrice !== 0) {
+                    const roi = ((markPrice - avgPrice) / avgPrice) * 100;
+                    const roiClass = roi >= 0 ? 'delta-positive' : 'delta-negative';
+                    roiHtml = `<span class="${roiClass}">${roi.toFixed(2)}%</span>`;
+                }
+
                 row.innerHTML = `
                     <td>${position.instrument_name}</td>
                     <td>${size}</td>
                     <td>${position.direction}</td>
                     <td>${typeof avgPrice === 'number' ? avgPrice.toFixed(5) : avgPrice}</td>
                     <td>${typeof markPrice === 'number' ? markPrice.toFixed(5) : markPrice}</td>
+                    <td>${roiHtml}</td>
                     <td class="${delta >= 0 ? 'delta-positive' : 'delta-negative'}">${typeof delta === 'number' ? delta.toFixed(4) : delta}</td>
                     <td class="${deltaAverage >= 0 ? 'delta-positive' : 'delta-negative'}">${deltaAverage.toFixed(4)}</td>
                     <td>
@@ -1445,7 +1468,7 @@
 
             if (unrecordedPositions.length === 0) {
                 const row = document.createElement('tr');
-                row.innerHTML = '<td colspan="8" style="text-align: center; color: #7f8c8d;">所有仓位都已记录在数据库中</td>';
+                row.innerHTML = '<td colspan="9" style="text-align: center; color: #7f8c8d;">所有仓位都已记录在数据库中</td>';
                 tbody.appendChild(row);
             }
         }

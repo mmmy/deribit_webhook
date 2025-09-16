@@ -1,12 +1,15 @@
-import { 
-  ConfigLoader, 
-  DeribitAuth, 
-  DeribitClient, 
-  DeltaManager, 
-  MockDeribitClient 
-} from '../services';
 import { DeribitPrivateAPI, createAuthInfo, getConfigByEnvironment } from '../api';
+import { DeltaRecordType } from '../database/types';
+import {
+  ConfigLoader,
+  DeltaManager,
+  DeribitAuth,
+  DeribitClient,
+  MockDeribitClient
+} from '../services';
 import { executePositionAdjustment } from '../services/position-adjustment';
+import { WeChatNotificationService } from '../services/wechat-notification';
+import { DeribitOrder } from '../types';
 
 export interface PollingResult {
   accountName: string;
@@ -26,14 +29,23 @@ export class PositionPollingService {
   private deribitClient: DeribitClient;
   private mockClient: MockDeribitClient;
   private deltaManager: DeltaManager;
+  private wechatNotification: WeChatNotificationService;
   private useMockMode: boolean;
 
-  constructor() {
-    this.configLoader = ConfigLoader.getInstance();
-    this.deribitAuth = new DeribitAuth();
-    this.deribitClient = new DeribitClient();
-    this.mockClient = new MockDeribitClient();
-    this.deltaManager = DeltaManager.getInstance();
+  constructor(
+    configLoader?: ConfigLoader,
+    deribitAuth?: DeribitAuth,
+    deribitClient?: DeribitClient,
+    mockClient?: MockDeribitClient,
+    deltaManager?: DeltaManager
+  ) {
+    // 支持依赖注入，但保持向后兼容
+    this.configLoader = configLoader || ConfigLoader.getInstance();
+    this.deribitAuth = deribitAuth || new DeribitAuth();
+    this.deribitClient = deribitClient || new DeribitClient();
+    this.mockClient = mockClient || new MockDeribitClient();
+    this.deltaManager = deltaManager || DeltaManager.getInstance();
+    this.wechatNotification = new WeChatNotificationService(this.configLoader);
     this.useMockMode = process.env.USE_MOCK_MODE === 'true';
   }
 
@@ -78,6 +90,9 @@ export class PositionPollingService {
             if (positionsData.success && positionsData.data) {
               // Analyze positions for delta adjustments
               await this.analyzePositionsForAdjustment(positionsData.data, account.name, requestId);
+
+              // Check for high ROI sell positions that need to be closed
+              this.checkHighROISellPositions(positionsData.data, account.name, requestId);
             }
 
             results.push(positionsData);
@@ -107,6 +122,303 @@ export class PositionPollingService {
     } catch (error) {
       console.error(`💥 [${requestId}] Polling error:`, error);
       throw error;
+    }
+  }
+
+  /**
+   * 轮询所有账户的未成交限价订单并执行渐进式策略
+   */
+  async pollAllAccountsPendingOrders(): Promise<PollingResult[]> {
+    const requestId = `order_poll_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+
+    try {
+      console.log(`🔄 [${requestId}] Starting pending orders polling for all enabled accounts`);
+
+      const accounts = this.configLoader.getEnabledAccounts();
+      if (accounts.length === 0) {
+        console.log(`⚠️ [${requestId}] No enabled accounts found for pending orders polling`);
+        return [];
+      }
+
+      const results: PollingResult[] = [];
+
+      for (const account of accounts) {
+        try {
+          console.log(`📋 [${requestId}] Polling pending orders for account: ${account.name}`);
+
+          if (this.useMockMode) {
+            // Mock mode: skip pending orders processing
+            results.push({
+              accountName: account.name,
+              success: true,
+              mockMode: true,
+              data: [],
+              timestamp: new Date().toISOString()
+            });
+            console.log(`✅ [${requestId}] Mock mode: skipped pending orders for ${account.name}`);
+          } else {
+            // Real mode: process pending orders
+            const orderResult = await this.processPendingOrdersForAccount(account.name, requestId);
+            results.push(orderResult);
+
+            // 发送企业微信通知（无论成功还是失败）
+            try {
+              if (orderResult.data?.length) {
+                await this.wechatNotification.sendPendingOrdersNotification(
+                  account.name,
+                  orderResult.data || [],
+                  requestId,
+                  orderResult.success,
+                  orderResult.error
+                );
+              }
+            } catch (notificationError) {
+              console.error(`❌ [${requestId}] Failed to send WeChat notification for account ${account.name}:`, notificationError);
+            }
+          }
+
+        } catch (accountError) {
+          console.error(`❌ [${requestId}] Failed to process pending orders for account ${account.name}:`, accountError);
+          const errorMessage = accountError instanceof Error ? accountError.message : 'Unknown error';
+
+          results.push({
+            accountName: account.name,
+            success: false,
+            error: errorMessage,
+            timestamp: new Date().toISOString()
+          });
+        }
+      }
+
+      // Summary results
+      const successCount = results.filter(r => r.success).length;
+      const totalProcessed = results
+        .filter(r => r.success)
+        .reduce((sum, r) => sum + (r.data?.length || 0), 0);
+
+      console.log(`📋 [${requestId}] Pending orders polling completed: ${successCount}/${accounts.length} accounts successful, ${totalProcessed} orders processed`);
+
+      return results;
+
+    } catch (error) {
+      console.error(`💥 [${requestId}] Pending orders polling error:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * 处理单个账户的未成交限价订单
+   */
+  private async processPendingOrdersForAccount(accountName: string, requestId: string): Promise<PollingResult> {
+    try {
+      console.log(`📋 [${requestId}] Processing pending orders for account: ${accountName}`);
+
+      // 1. 查询Delta数据库中的未成交订单记录
+      const pendingOrderRecords = this.deltaManager.getRecords({
+        account_id: accountName,
+        record_type: DeltaRecordType.ORDER
+      });
+
+      if (pendingOrderRecords.length === 0) {
+        console.log(`📋 [${requestId}] No pending order records found for account: ${accountName}`);
+        return {
+          accountName,
+          success: true,
+          data: [],
+          timestamp: new Date().toISOString()
+        };
+      }
+
+      console.log(`📋 [${requestId}] Found ${pendingOrderRecords.length} pending order records for account: ${accountName}`);
+
+      // 2. 获取访问令牌
+      await this.deribitAuth.authenticate(accountName);
+      const tokenInfo = this.deribitAuth.getTokenInfo(accountName);
+      if (!tokenInfo) {
+        throw new Error(`Authentication failed for ${accountName}`);
+      }
+
+      const processedOrders = [];
+      const spreadRatioThreshold = parseFloat(process.env.SPREAD_RATIO_THRESHOLD || '0.15');
+      const spreadTickThreshold = parseInt(process.env.SPREAD_TICK_MULTIPLE_THRESHOLD || '2', 10);
+
+      // 3. 获取真实的未成交订单
+      const isTestEnv = process.env.USE_TEST_ENVIRONMENT === 'true';
+      const apiConfig = getConfigByEnvironment(isTestEnv);
+      const authInfo = createAuthInfo(tokenInfo.accessToken);
+      const privateAPI = new DeribitPrivateAPI(apiConfig, authInfo);
+
+      // 获取所有未成交的限价订单
+      const openOrders: DeribitOrder[] = await privateAPI.getOpenOrders({kind: 'option'});
+      const limitOrders = openOrders.filter(order => order.order_type === 'limit' && order.order_state === 'open');
+
+      console.log(`📋 [${requestId}] Found ${limitOrders.length} open limit orders for account: ${accountName}`);
+
+      // 4. 处理每个真实的未成交订单
+      for (const realOrder of limitOrders) {
+        try {
+          console.log(`📋 [${requestId}] Processing real order: ${realOrder.instrument_name} (order_id: ${realOrder.order_id})`);
+
+          // 4.1 查找对应的数据库记录
+          const orderRecord = pendingOrderRecords.find(record => record.order_id === realOrder.order_id);
+          if (!orderRecord) {
+            console.log(`⚠️ [${requestId}] No database record found for order ${realOrder.order_id}, skipping`);
+            continue;
+          }
+
+          // 4.2 获取合约的盘口价差信息
+          const optionDetails = await this.deribitClient.getOptionDetails(realOrder.instrument_name);
+          if (!optionDetails) {
+            console.log(`⚠️ [${requestId}] Failed to get option details for ${realOrder.instrument_name}, skipping`);
+            continue;
+          }
+
+          // 4.3 获取合约信息以获取tick_size
+          const instrumentInfo = await this.deribitClient.getInstrument(realOrder.instrument_name);
+          if (!instrumentInfo) {
+            console.log(`❌ [${requestId}] Failed to get instrument details for ${realOrder.instrument_name}, skipping`);
+            continue;
+          }
+
+          // 4.4 使用综合价差判断逻辑
+          const { calculateSpreadRatio, isSpreadReasonable } = await import('../utils/spread-calculation');
+          const spreadRatio = calculateSpreadRatio(optionDetails.best_bid_price, optionDetails.best_ask_price);
+          const isReasonable = isSpreadReasonable(
+            optionDetails.best_bid_price,
+            optionDetails.best_ask_price,
+            instrumentInfo.tick_size,
+            spreadRatioThreshold,
+            spreadTickThreshold
+          );
+
+          const tickMultiple = ((optionDetails.best_ask_price - optionDetails.best_bid_price) / instrumentInfo.tick_size).toFixed(1);
+          console.log(`📊 [${requestId}] Spread check for ${realOrder.instrument_name}: ratio=${(spreadRatio * 100).toFixed(2)}% (≤${(spreadRatioThreshold * 100).toFixed(2)}%), tick_multiple=${tickMultiple} (≤${spreadTickThreshold}), reasonable=${isReasonable}`);
+
+          // 4.5 如果价差合理，执行渐进式策略
+          if (isReasonable) {
+            const progressResult = await this.executeProgressiveStrategyForOrder(orderRecord, realOrder, tokenInfo.accessToken, requestId);
+            if (progressResult.success) {
+              processedOrders.push({
+                instrument_name: realOrder.instrument_name,
+                order_id: realOrder.order_id,
+                action: 'progressive_strategy_executed',
+                result: progressResult
+              });
+            }
+          } else {
+            console.log(`📊 [${requestId}] Spread too wide for ${realOrder.instrument_name}, skipping progressive strategy (ratio=${(spreadRatio * 100).toFixed(2)}%, tick_multiple=${tickMultiple})`);
+          }
+
+        } catch (orderError) {
+          console.error(`❌ [${requestId}] Failed to process order ${realOrder.instrument_name}:`, orderError);
+        }
+      }
+
+      console.log(`✅ [${requestId}] Processed ${processedOrders.length} orders for account: ${accountName}`);
+
+      return {
+        accountName,
+        success: true,
+        data: processedOrders,
+        timestamp: new Date().toISOString()
+      };
+
+    } catch (error) {
+      console.error(`❌ [${requestId}] Failed to process pending orders for account ${accountName}:`, error);
+      return {
+        accountName,
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        timestamp: new Date().toISOString()
+      };
+    }
+  }
+
+  /**
+   * 为未成交订单执行渐进式策略
+   */
+  private async executeProgressiveStrategyForOrder(
+    orderRecord: any,
+    realOrder: DeribitOrder,
+    accessToken: string,
+    requestId: string
+  ): Promise<{ success: boolean; message?: string; positionInfo?: any }> {
+    try {
+      console.log(`🎯 [${requestId}] Starting progressive strategy for order: ${realOrder.order_id}`);
+
+      // 1. 获取工具详情
+      const instrumentInfo = await this.deribitClient.getInstrument(realOrder.instrument_name);
+      if (!instrumentInfo) {
+        throw new Error(`Failed to get instrument info for ${realOrder.instrument_name}`);
+      }
+
+      // 2. 使用真实订单的方向和数量
+      const direction = realOrder.direction; // 'buy' 或 'sell'
+      const quantity = realOrder.amount; // 订单数量
+
+      // 3. 执行渐进式限价策略
+      const { executeProgressiveLimitStrategy } = await import('../services/progressive-limit-strategy');
+      const strategyResult = await executeProgressiveLimitStrategy(
+        {
+          orderId: realOrder.order_id,
+          instrumentName: realOrder.instrument_name,
+          direction: direction,
+          quantity: quantity,
+          initialPrice: realOrder.price, // 使用当前订单价格
+          accountName: orderRecord.account_id, // 从数据库记录获取账户名
+          instrumentDetail: instrumentInfo,
+          timeout: 8000,  // 8秒
+          maxStep: 3
+        },
+        {
+          deribitAuth: this.deribitAuth,
+          deribitClient: this.deribitClient
+        }
+      );
+
+      if (strategyResult.success) {
+        console.log(`✅ [${requestId}] Progressive strategy completed for order: ${realOrder.order_id}`);
+
+        // 4. 成功后，移除原订单记录
+        const deleted = this.deltaManager.deleteRecord(orderRecord.id!);
+        console.log(`🗑️ [${requestId}] Deleted order record: ${deleted ? 'success' : 'failed'} (ID: ${orderRecord.id})`);
+
+        // 5. 添加新的仓位记录
+        if (strategyResult.positionInfo) {
+          const positionRecord = {
+            account_id: orderRecord.account_id,
+            instrument_name: realOrder.instrument_name,
+            target_delta: orderRecord.target_delta,
+            move_position_delta: orderRecord.move_position_delta,
+            min_expire_days: orderRecord.min_expire_days,
+            tv_id: orderRecord.tv_id,
+            action: orderRecord.action,
+            record_type: DeltaRecordType.POSITION
+          };
+
+          const newRecord = this.deltaManager.createRecord(positionRecord);
+          console.log(`✅ [${requestId}] Created position record: ID ${newRecord.id} for ${realOrder.instrument_name}`);
+        }
+
+        return {
+          success: true,
+          message: strategyResult.message,
+          positionInfo: strategyResult.positionInfo
+        };
+      } else {
+        console.log(`❌ [${requestId}] Progressive strategy failed for order: ${realOrder.order_id} - ${strategyResult.message}`);
+        return {
+          success: false,
+          message: strategyResult.message
+        };
+      }
+
+    } catch (error) {
+      console.error(`❌ [${requestId}] Error executing progressive strategy for order ${realOrder.order_id}:`, error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Unknown error'
+      };
     }
   }
 
@@ -247,6 +559,87 @@ export class PositionPollingService {
   }
 
   /**
+   * Check for high ROI sell positions that need to be closed
+   * If position is option, direction=sell, and ROI>85%, close the position
+   */
+  private async checkHighROISellPositions(positions: any[], accountName: string, requestId: string): Promise<void> {
+    const ROI_THRESHOLD = 0.85; // 85% ROI threshold
+
+    for (const pos of positions) {
+      try {
+        // Check if position is an option
+        if (pos.kind !== 'option') {
+          continue;
+        }
+
+        // Check if direction is sell
+        if (pos.direction !== 'sell') {
+          continue;
+        }
+
+        // Calculate ROI: ((mark_price - average_price) / average_price) * 100
+        // For sell positions, ROI should be negative (we want the option price to decrease)
+        if (typeof pos.average_price !== 'number' || typeof pos.mark_price !== 'number' || pos.average_price === 0) {
+          continue;
+        }
+
+        let roi = ((pos.mark_price - pos.average_price) / pos.average_price);
+        // For sell positions, ROI is inverted (we profit when price decreases)
+        roi = -roi;
+
+        console.log(`📊 [${requestId}] ROI Check - ${accountName}:`);
+        console.log(`   🎯 Instrument: ${pos.instrument_name}`);
+        console.log(`   📈 Direction: ${pos.direction}`);
+        console.log(`   💰 Average Price: ${pos.average_price}`);
+        console.log(`   📊 Mark Price: ${pos.mark_price}`);
+        console.log(`   📈 ROI: ${(roi * 100).toFixed(2)}%`);
+
+        // Check if ROI exceeds threshold
+        if (roi > ROI_THRESHOLD) {
+          console.log(`🚨 [${requestId}] High ROI detected for ${pos.instrument_name}: ${(roi * 100).toFixed(2)}% > ${(ROI_THRESHOLD * 100)}%`);
+
+          // Get access token
+          const tokenInfo = this.deribitAuth.getTokenInfo(accountName);
+          if (!tokenInfo) {
+            console.error(`❌ [${requestId}] No access token found for ${accountName}`);
+            continue;
+          }
+
+          // Send notification before closing
+          await this.sendHighROICloseNotification(accountName, pos, roi, requestId);
+
+          // Execute position close
+          const { executePositionClose } = await import('../services/position-adjustment');
+          const closeResult = await executePositionClose(
+            {
+              requestId: `${requestId}_high_roi_close`,
+              accountName,
+              currentPosition: pos,
+              // deltaRecord removed - high ROI close doesn't need to delete delta records
+              accessToken: tokenInfo.accessToken,
+              closeRatio: 1.0, // Close entire position
+              isMarketOrder: false // Use limit order with progressive strategy
+            },
+            {
+              deribitClient: this.deribitClient,
+              deltaManager: this.deltaManager,
+              deribitAuth: this.deribitAuth
+            }
+          );
+
+          // Send result notification
+          await this.sendHighROICloseResultNotification(accountName, pos, roi, closeResult, requestId);
+
+          console.log(`✅ [${requestId}] High ROI close executed for ${pos.instrument_name}:`, closeResult.success ? 'SUCCESS' : 'FAILED');
+        }
+
+      } catch (posError) {
+        console.warn(`⚠️ [${requestId}] Failed to check ROI for position ${pos.instrument_name}:`, posError);
+      }
+    }
+  }
+
+  /**
    * Send adjustment start notification to WeChat
    */
   private async sendAdjustmentNotification(accountName: string, position: any, record: any, requestId: string): Promise<void> {
@@ -305,7 +698,7 @@ export class PositionPollingService {
 
 👤 **账户**: ${accountName}
 💬 **失败原因**: ${result.reason}
-${result.error ? `📋 **错误详情**: \`\`\`\n${result.error}\n\`\`\`` : ''}
+${result.error ? `📋 **错误详情**: ${result.error}` : ''}
 🔄 **请求ID**: ${requestId}
 ⏰ **失败时间**: ${new Date().toLocaleString('zh-CN')}
 
@@ -316,6 +709,63 @@ ${result.error ? `📋 **错误详情**: \`\`\`\n${result.error}\n\`\`\`` : ''}
       }
     } catch (error) {
       console.error(`❌ [${requestId}] Failed to send result notification for account ${accountName}:`, error);
+    }
+  }
+
+  /**
+   * Send high ROI close notification to WeChat
+   */
+  private async sendHighROICloseNotification(accountName: string, position: any, roi: number, requestId: string): Promise<void> {
+    try {
+      const bot = this.configLoader.getAccountWeChatBot(accountName);
+      if (bot) {
+        const notificationContent = `🚨 **高ROI平仓通知**
+👤 **账户**: ${accountName}
+🎯 **合约**: ${position.instrument_name}
+📈 **仓位方向**: ${position.direction}
+📊 **仓位大小**: ${position.size}
+💰 **平均价格**: ${position.average_price}
+📊 **标记价格**: ${position.mark_price}
+📈 **ROI**: ${(roi * 100).toFixed(2)}%
+⚠️ **触发阈值**: 85%
+🔄 **操作**: 即将执行平仓
+🔄 **请求ID**: ${requestId}
+
+> 检测到高ROI卖出期权仓位，系统将自动执行平仓操作`;
+
+        await bot.sendMarkdown(notificationContent);
+        console.log(`📱 [${requestId}] High ROI close notification sent for account: ${accountName}`);
+      }
+    } catch (error) {
+      console.error(`❌ [${requestId}] Failed to send high ROI close notification for account ${accountName}:`, error);
+    }
+  }
+
+  /**
+   * Send high ROI close result notification to WeChat
+   */
+  private async sendHighROICloseResultNotification(accountName: string, position: any, roi: number, closeResult: any, requestId: string): Promise<void> {
+    try {
+      const bot = this.configLoader.getAccountWeChatBot(accountName);
+      if (bot) {
+        const statusEmoji = closeResult.success ? '✅' : '❌';
+        const statusText = closeResult.success ? '成功' : '失败';
+
+        const notificationContent = `${statusEmoji} **高ROI平仓结果**
+👤 **账户**: ${accountName}
+🎯 **合约**: ${position.instrument_name}
+📈 **ROI**: ${(roi * 100).toFixed(2)}%
+🔄 **平仓状态**: ${statusText}
+${closeResult.message ? `📝 **详情**: ${closeResult.message}` : ''}
+🔄 **请求ID**: ${requestId}
+
+> 高ROI平仓操作已完成`;
+
+        await bot.sendMarkdown(notificationContent);
+        console.log(`📱 [${requestId}] High ROI close result notification sent for account: ${accountName}, status: ${statusText}`);
+      }
+    } catch (error) {
+      console.error(`❌ [${requestId}] Failed to send high ROI close result notification for account ${accountName}:`, error);
     }
   }
 }

@@ -22,7 +22,7 @@ router.get('/api/logs', async (req, res) => {
 
     // Parameter validation
     const maxRecordsNum = parseInt(maxRecords as string);
-    if (isNaN(maxRecordsNum) || maxRecordsNum < 1 || maxRecordsNum > 1000) {
+    if (isNaN(maxRecordsNum) || maxRecordsNum < 1 || maxRecordsNum > 5000) {
       return res.status(400).json({
         success: false,
         message: 'maxRecords must be a number between 1-1000',

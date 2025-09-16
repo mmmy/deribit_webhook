@@ -265,6 +265,25 @@
             font-weight: bold;
         }
 
+        .action-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .action-buy {
+            background: #27ae60;
+            color: white;
+        }
+
+        .action-sell {
+            background: #e74c3c;
+            color: white;
+        }
+
         .loading {
             text-align: center;
             padding: 40px;
@@ -400,6 +419,63 @@
             0% { transform: scale(1); }
             50% { transform: scale(1.05); }
             100% { transform: scale(1); }
+        }
+
+        /* 右上角弹出提醒样式 */
+        .copy-notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #fff3cd;
+            border: 2px solid #ffc107;
+            border-radius: 8px;
+            padding: 15px 20px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 3000;
+            max-width: 350px;
+            opacity: 0;
+            transform: translateX(100%);
+            transition: all 0.3s ease-in-out;
+        }
+
+        .copy-notification.show {
+            opacity: 1;
+            transform: translateX(0);
+        }
+
+        .copy-notification-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+            font-weight: bold;
+            color: #856404;
+        }
+
+        .copy-notification-content {
+            color: #856404;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+
+        .copy-notification-close {
+            position: absolute;
+            top: 8px;
+            right: 12px;
+            background: none;
+            border: none;
+            font-size: 18px;
+            color: #856404;
+            cursor: pointer;
+            padding: 0;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .copy-notification-close:hover {
+            color: #533f03;
         }
 
         /* 警报消息模态框样式 */
@@ -602,9 +678,9 @@
                                     <th>移仓Delta</th>
                                     <th>最小到期天数</th>
                                     <th>Delta平均值</th>
+                                    <th>ROI</th>
                                     <th>TV_ID</th>
                                     <th>创建时间</th>
-                                    <th>更新时间</th>
                                     <th>操作</th>
                                 </tr>
                             </thead>
@@ -625,6 +701,7 @@
                                     <th>状态</th>
                                     <th>订单ID</th>
                                     <th>合约名称</th>
+                                    <th>交易动作</th>
                                     <th>目标Delta</th>
                                     <th>移仓Delta</th>
                                     <th>最小到期天数</th>
@@ -658,6 +735,7 @@
                                     <th>方向</th>
                                     <th>平均价格</th>
                                     <th>标记价格</th>
+                                    <th>ROI</th>
                                     <th>Delta值</th>
                                     <th>Delta平均值</th>
                                     <th>操作</th>
@@ -1140,16 +1218,17 @@
                     throw new Error(liveData.message);
                 }
 
-                // 更新数据
-                deltaRecords = deltaData.records || [];
-                livePositions = liveData.data.positions || [];
-                liveOrders = liveData.data.openOrders || [];
+                // 更新数据 - 适配新的ApiResponse格式
+                deltaRecords = deltaData.data?.records || deltaData.records || [];
+                livePositions = liveData.data?.positions || liveData.data?.data?.positions || [];
+                liveOrders = liveData.data?.openOrders || liveData.data?.data?.openOrders || [];
 
                 // 验证记录有效性
                 validateRecords();
 
-                // 更新界面
-                updateStats(deltaData.summary);
+                // 更新界面 - 适配新的数据结构
+                const summaryData = deltaData.data?.summary || deltaData.summary || {};
+                updateStats(summaryData);
                 updatePositionRecordsTable();
                 updateOrderRecordsTable();
                 updatePositionsTable();
@@ -1166,15 +1245,19 @@
 
         // 更新统计信息
         function updateStats(summary) {
+            // 确保summary对象存在，提供默认值
+            const safeSummary = summary || {};
+            
             // 计算详细统计
             const positionRecords = validatedRecords.filter(record => record.record_type === 'position');
             const orderRecords = deltaRecords.filter(record => record.record_type === 'order');
 
             // 更新主要数值 (只有仓位有Delta值)
-            document.getElementById('totalDelta').textContent = (summary.position_delta || 0).toFixed(4);
-            document.getElementById('positionDelta').textContent = (summary.position_delta || 0).toFixed(4);
+            const positionDelta = safeSummary.position_delta || safeSummary.total_delta || 0;
+            document.getElementById('totalDelta').textContent = positionDelta.toFixed(4);
+            document.getElementById('positionDelta').textContent = positionDelta.toFixed(4);
             document.getElementById('orderCount').textContent = orderRecords.length;
-            document.getElementById('recordCount').textContent = summary.record_count || 0;
+            document.getElementById('recordCount').textContent = safeSummary.record_count || deltaRecords.length || 0;
 
             // 更新子标题
             document.getElementById('positionCount').textContent = `${positionRecords.length}个仓位`;
@@ -1183,8 +1266,6 @@
             // 设置颜色 (只有仓位Delta需要颜色)
             const totalElement = document.getElementById('totalDelta');
             const positionElement = document.getElementById('positionDelta');
-
-            const positionDelta = summary.position_delta || 0;
 
             totalElement.className = positionDelta >= 0 ? 'value delta-positive' : 'value delta-negative';
             positionElement.className = positionDelta >= 0 ? 'value delta-positive' : 'value delta-negative';
@@ -1232,6 +1313,24 @@
                     }
                 }
 
+                // 计算ROI：从实时仓位数据中获取价格信息
+                // 如果是sell方向，ROI需要取负值
+                let roiHtml = '-';
+                if (livePosition) {
+                    const avgPrice = livePosition.average_price || livePosition.average_price_usd || 0;
+                    const markPrice = livePosition.mark_price || 0;
+
+                    if (typeof avgPrice === 'number' && typeof markPrice === 'number' && avgPrice !== 0) {
+                        let roi = ((markPrice - avgPrice) / avgPrice) * 100;
+                        // 如果是sell方向，ROI取负值
+                        if (livePosition.direction === 'sell') {
+                            roi = -roi;
+                        }
+                        const roiClass = roi >= 0 ? 'delta-positive' : 'delta-negative';
+                        roiHtml = `<span class="${roiClass}">${roi.toFixed(2)}%</span>`;
+                    }
+                }
+
                 // 查找对应的实际仓位数据以获取数量信息
                 const matchingPosition = livePositions.find(pos => pos.instrument_name === record.instrument_name);
                 const quantity = matchingPosition ? (matchingPosition.size || matchingPosition.amount || 0) : '-';
@@ -1244,9 +1343,9 @@
                     <td class="${(record.move_position_delta || 0) >= 0 ? 'delta-positive' : 'delta-negative'}">${(record.move_position_delta || 0).toFixed(4)}</td>
                     <td>${record.min_expire_days || '-'}</td>
                     <td>${deltaAverageHtml}</td>
+                    <td>${roiHtml}</td>
                     <td>${record.tv_id || '-'}</td>
                     <td>${new Date(record.created_at).toLocaleString()}</td>
-                    <td>${new Date(record.updated_at).toLocaleString()}</td>
                     <td>
                         <button class="btn btn-warning" data-action="edit" data-record-id="${record.id}">编辑</button>
                         <button class="btn btn-danger" data-action="delete" data-record-id="${record.id}">删除</button>
@@ -1295,6 +1394,7 @@
                     <td>${statusHtml}</td>
                     <td>${record.order_id || '-'}</td>
                     <td>${record.instrument_name}</td>
+                    <td><span class="action-badge ${record.action === 'buy' ? 'action-buy' : 'action-sell'}">${record.action || '-'}</span></td>
                     <td class="${record.target_delta >= 0 ? 'delta-positive' : 'delta-negative'}">${record.target_delta.toFixed(4)}</td>
                     <td class="${(record.move_position_delta || 0) >= 0 ? 'delta-positive' : 'delta-negative'}">${(record.move_position_delta || 0).toFixed(4)}</td>
                     <td>${record.min_expire_days || '-'}</td>
@@ -1312,7 +1412,7 @@
 
             if (orderRecords.length === 0) {
                 const row = document.createElement('tr');
-                row.innerHTML = '<td colspan="9" style="text-align: center; color: #7f8c8d;">暂无订单记录</td>';
+                row.innerHTML = '<td colspan="11" style="text-align: center; color: #7f8c8d;">暂无订单记录</td>';
                 tbody.appendChild(row);
             }
         }
@@ -1345,12 +1445,26 @@
                     deltaAverage = delta / Math.abs(size);
                 }
 
+                // 计算ROI：((标记价格 - 平均价格) / 平均价格) * 100
+                // 如果是sell方向，ROI需要取负值
+                let roiHtml = '-';
+                if (typeof avgPrice === 'number' && typeof markPrice === 'number' && avgPrice !== 0) {
+                    let roi = ((markPrice - avgPrice) / avgPrice) * 100;
+                    // 如果是sell方向，ROI取负值
+                    if (position.direction === 'sell') {
+                        roi = -roi;
+                    }
+                    const roiClass = roi >= 0 ? 'delta-positive' : 'delta-negative';
+                    roiHtml = `<span class="${roiClass}">${roi.toFixed(2)}%</span>`;
+                }
+
                 row.innerHTML = `
                     <td>${position.instrument_name}</td>
                     <td>${size}</td>
                     <td>${position.direction}</td>
                     <td>${typeof avgPrice === 'number' ? avgPrice.toFixed(5) : avgPrice}</td>
                     <td>${typeof markPrice === 'number' ? markPrice.toFixed(5) : markPrice}</td>
+                    <td>${roiHtml}</td>
                     <td class="${delta >= 0 ? 'delta-positive' : 'delta-negative'}">${typeof delta === 'number' ? delta.toFixed(4) : delta}</td>
                     <td class="${deltaAverage >= 0 ? 'delta-positive' : 'delta-negative'}">${deltaAverage.toFixed(4)}</td>
                     <td>
@@ -1364,7 +1478,7 @@
 
             if (unrecordedPositions.length === 0) {
                 const row = document.createElement('tr');
-                row.innerHTML = '<td colspan="8" style="text-align: center; color: #7f8c8d;">所有仓位都已记录在数据库中</td>';
+                row.innerHTML = '<td colspan="9" style="text-align: center; color: #7f8c8d;">所有仓位都已记录在数据库中</td>';
                 tbody.appendChild(row);
             }
         }
@@ -2077,9 +2191,32 @@
             document.getElementById('alertModal').style.display = 'none';
         }
 
+        // 显示右上角复制提醒
+        function showCopyNotification() {
+            const notification = document.getElementById('copyNotification');
+            if (notification) {
+                notification.classList.add('show');
+
+                // 10秒后自动关闭
+                setTimeout(() => {
+                    closeCopyNotification();
+                }, 10000);
+            }
+        }
+
+        // 关闭右上角复制提醒
+        function closeCopyNotification() {
+            const notification = document.getElementById('copyNotification');
+            if (notification) {
+                notification.classList.remove('show');
+            }
+        }
+
         // 确保函数在全局作用域中可用
         window.closeAlertModal = closeAlertModal;
         window.copyAlertMessage = copyAlertMessage;
+        window.showCopyNotification = showCopyNotification;
+        window.closeCopyNotification = closeCopyNotification;
 
         async function copyAlertMessage() {
             console.log('copyAlertMessage function called');
@@ -2125,6 +2262,12 @@
 
                 showSuccess(`警报消息已复制到剪贴板 (TV_ID: ${tvId})`);
 
+                // 显示右上角提醒
+                showCopyNotification();
+
+                // 显示右上角提醒
+                showCopyNotification();
+
             } catch (err) {
                 console.log('Clipboard API failed, trying fallback method:', err);
 
@@ -2143,6 +2286,9 @@
                     if (successful) {
                         console.log('Fallback copy successful');
                         showSuccess(`警报消息已复制到剪贴板 (TV_ID: ${tvId})`);
+
+                        // 显示右上角提醒
+                        showCopyNotification();
                     } else {
                         throw new Error('execCommand failed');
                     }
@@ -2233,6 +2379,20 @@
                 <div id="alertMessageContent"></div>
             </div>
 
+            <!-- 重要提醒框 -->
+            <div style="background: #fff3cd; border: 2px solid #ffc107; border-radius: 6px; padding: 15px; margin-top: 15px;">
+                <h4 style="margin: 0 0 10px 0; color: #856404; display: flex; align-items: center;">
+                    ⚠️ 重要提醒：品种选择注意事项
+                </h4>
+                <div style="color: #856404; font-weight: bold; margin-bottom: 10px;">
+                    <p style="margin: 5px 0;">• <strong>xx<span style="font-size: 18px; font-weight: bold; color: #dc3545;">USDC</span>品种</strong>：用来交易<span style="font-size: 18px; font-weight: bold; color: #dc3545;">USDC</span>期权（现金结算）</p>
+                    <p style="margin: 5px 0;">• <strong>xx<span style="font-size: 18px; font-weight: bold; color: #dc3545;">USDT</span>品种</strong>：用来交易币本位期权（实物结算）</p>
+                </div>
+                <p style="margin: 0; color: #856404; font-size: 13px;">
+                    请根据您的交易需求选择正确的品种，避免因品种选择错误导致的交易问题。
+                </p>
+            </div>
+
             <div style="background: #e8f4fd; border: 1px solid #bee5eb; border-radius: 6px; padding: 15px; margin-top: 15px;">
                 <h4 style="margin: 0 0 10px 0; color: #0c5460;">📝 使用说明：</h4>
                 <ul style="margin: 0; padding-left: 20px; color: #0c5460;">
@@ -2254,6 +2414,20 @@
                     关闭
                 </button>
             </div>
+        </div>
+    </div>
+
+    <!-- 右上角复制提醒 -->
+    <div id="copyNotification" class="copy-notification">
+        <button class="copy-notification-close" onclick="closeCopyNotification()">&times;</button>
+        <div class="copy-notification-header">
+            ⚠️ 品种提醒
+        </div>
+        <div class="copy-notification-content">
+            <strong>品种选择注意事项：</strong><br>
+            • xx<span style="font-size: 16px; font-weight: bold; color: #d63384;">USDC</span>品种：用来交易<span style="font-size: 16px; font-weight: bold; color: #d63384;">USDC</span>期权<br>
+            • xx<span style="font-size: 16px; font-weight: bold; color: #d63384;">USDT</span>品种：用来交易币本位期权<br>
+            <small style="color: #6c757d;">请根据需求选择正确品种</small>
         </div>
     </div>
 

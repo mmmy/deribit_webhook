@@ -2,14 +2,14 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 import {
-    AccountDeltaSummary,
-    CreateDeltaRecordInput,
-    DeltaRecord,
-    DeltaRecordQuery,
-    DeltaRecordStats,
-    DeltaRecordType,
-    InstrumentDeltaSummary,
-    UpdateDeltaRecordInput
+  AccountDeltaSummary,
+  CreateDeltaRecordInput,
+  DeltaRecord,
+  DeltaRecordQuery,
+  DeltaRecordStats,
+  DeltaRecordType,
+  InstrumentDeltaSummary,
+  UpdateDeltaRecordInput
 } from './types';
 
 /**
@@ -53,292 +53,9 @@ export class DeltaManager {
   }
 
   /**
-   * 检查并执行数据库迁移
-   */
-  private checkAndMigrate(): void {
-    const tableInfo = this.db.pragma('table_info(delta_records)') as any[];
-    const hasTV_ID = tableInfo.some((col: any) => col.name === 'tv_id');
-    const hasTargetDelta = tableInfo.some((col: any) => col.name === 'target_delta');
-    const hasDelta = tableInfo.some((col: any) => col.name === 'delta');
-    const hasMovePositionDelta = tableInfo.some((col: any) => col.name === 'move_position_delta');
-    const hasMinExpireDays = tableInfo.some((col: any) => col.name === 'min_expire_days');
-
-    // 迁移1: 添加tv_id列
-    if (!hasTV_ID && tableInfo.length > 0) {
-      console.log('🔄 检测到数据库结构变更，执行迁移...');
-
-      try {
-        this.db.exec('ALTER TABLE delta_records ADD COLUMN tv_id INTEGER');
-        console.log('✅ 已添加tv_id列');
-
-        this.db.exec('UPDATE delta_records SET tv_id = 0 WHERE tv_id IS NULL');
-        console.log('✅ 已为现有记录设置默认tv_id值');
-
-        this.rebuildTableWithTVID();
-
-      } catch (error) {
-        console.error('❌ 数据库迁移失败:', error);
-        throw error;
-      }
-    }
-
-    // 迁移2: 将delta字段重命名为target_delta
-    if (hasDelta && !hasTargetDelta && tableInfo.length > 0) {
-      console.log('🔄 检测到delta字段需要重命名为target_delta，执行迁移...');
-
-      try {
-        this.rebuildTableWithTargetDelta();
-        console.log('✅ 已将delta字段重命名为target_delta');
-
-      } catch (error) {
-        console.error('❌ delta字段重命名失败:', error);
-        throw error;
-      }
-    }
-
-    // 迁移3: 将tv_id字段改为可空
-    const tvIdColumn = tableInfo.find((col: any) => col.name === 'tv_id');
-    if (tvIdColumn && tvIdColumn.notnull === 1 && tableInfo.length > 0) {
-      console.log('🔄 检测到tv_id字段需要改为可空，执行迁移...');
-
-      try {
-        this.rebuildTableWithNullableTvId();
-        console.log('✅ 已将tv_id字段改为可空');
-
-      } catch (error) {
-        console.error('❌ tv_id字段迁移失败:', error);
-        throw error;
-      }
-    }
-
-    // 迁移4: 添加move_position_delta字段
-    if (!hasMovePositionDelta && tableInfo.length > 0) {
-      console.log('🔄 检测到需要添加move_position_delta字段，执行迁移...');
-
-      try {
-        this.rebuildTableWithMovePositionDelta();
-        console.log('✅ 已添加move_position_delta字段');
-
-      } catch (error) {
-        console.error('❌ 添加move_position_delta字段失败:', error);
-        throw error;
-      }
-    }
-
-    // 迁移5: 添加min_expire_days字段
-    if (!hasMinExpireDays && tableInfo.length > 0) {
-      console.log('🔄 检测到需要添加min_expire_days字段，执行迁移...');
-
-      try {
-        this.rebuildTableWithMinExpireDays();
-        console.log('✅ 已添加min_expire_days字段');
-
-      } catch (error) {
-        console.error('❌ 添加min_expire_days字段失败:', error);
-        throw error;
-      }
-    }
-  }
-
-  /**
-   * 重建表以添加NOT NULL约束
-   */
-  private rebuildTableWithTVID(): void {
-    const transaction = this.db.transaction(() => {
-      // 创建新表
-      this.db.exec(`
-        CREATE TABLE delta_records_new (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          account_id TEXT NOT NULL,
-          instrument_name TEXT NOT NULL,
-          order_id TEXT,
-          delta REAL NOT NULL CHECK (delta >= -1 AND delta <= 1),
-          tv_id INTEGER NOT NULL,
-          record_type TEXT NOT NULL CHECK (record_type IN ('position', 'order')),
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-
-      // 复制数据
-      this.db.exec(`
-        INSERT INTO delta_records_new (id, account_id, instrument_name, order_id, delta, tv_id, record_type, created_at, updated_at)
-        SELECT id, account_id, instrument_name, order_id, delta, tv_id, record_type, created_at, updated_at
-        FROM delta_records
-      `);
-
-      // 删除旧表
-      this.db.exec('DROP TABLE delta_records');
-
-      // 重命名新表
-      this.db.exec('ALTER TABLE delta_records_new RENAME TO delta_records');
-    });
-
-    transaction();
-    console.log('✅ 表结构重建完成');
-  }
-
-  /**
-   * 重建表以将delta字段重命名为target_delta
-   */
-  private rebuildTableWithTargetDelta(): void {
-    const transaction = this.db.transaction(() => {
-      // 创建新表
-      this.db.exec(`
-        CREATE TABLE delta_records_new (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          account_id TEXT NOT NULL,
-          instrument_name TEXT NOT NULL,
-          order_id TEXT,
-          target_delta REAL NOT NULL CHECK (target_delta >= -1 AND target_delta <= 1),
-          tv_id INTEGER NOT NULL,
-          record_type TEXT NOT NULL CHECK (record_type IN ('position', 'order')),
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-
-      // 复制数据，将delta字段映射到target_delta
-      this.db.exec(`
-        INSERT INTO delta_records_new (id, account_id, instrument_name, order_id, target_delta, tv_id, record_type, created_at, updated_at)
-        SELECT id, account_id, instrument_name, order_id, delta, tv_id, record_type, created_at, updated_at
-        FROM delta_records
-      `);
-
-      // 删除旧表
-      this.db.exec('DROP TABLE delta_records');
-
-      // 重命名新表
-      this.db.exec('ALTER TABLE delta_records_new RENAME TO delta_records');
-    });
-
-    transaction();
-    console.log('✅ delta字段已重命名为target_delta');
-  }
-
-  /**
-   * 重建表以将tv_id字段改为可空
-   */
-  private rebuildTableWithNullableTvId(): void {
-    const transaction = this.db.transaction(() => {
-      // 创建新表
-      this.db.exec(`
-        CREATE TABLE delta_records_new (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          account_id TEXT NOT NULL,
-          instrument_name TEXT NOT NULL,
-          order_id TEXT,
-          target_delta REAL NOT NULL CHECK (target_delta >= -1 AND target_delta <= 1),
-          tv_id INTEGER,
-          record_type TEXT NOT NULL CHECK (record_type IN ('position', 'order')),
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-
-      // 复制数据
-      this.db.exec(`
-        INSERT INTO delta_records_new (id, account_id, instrument_name, order_id, target_delta, tv_id, record_type, created_at, updated_at)
-        SELECT id, account_id, instrument_name, order_id, target_delta, tv_id, record_type, created_at, updated_at
-        FROM delta_records
-      `);
-
-      // 删除旧表
-      this.db.exec('DROP TABLE delta_records');
-
-      // 重命名新表
-      this.db.exec('ALTER TABLE delta_records_new RENAME TO delta_records');
-    });
-
-    transaction();
-    console.log('✅ tv_id字段已改为可空');
-  }
-
-  /**
-   * 重建表以添加move_position_delta字段
-   */
-  private rebuildTableWithMovePositionDelta(): void {
-    const transaction = this.db.transaction(() => {
-      // 创建新表
-      this.db.exec(`
-        CREATE TABLE delta_records_new (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          account_id TEXT NOT NULL,
-          instrument_name TEXT NOT NULL,
-          order_id TEXT,
-          target_delta REAL NOT NULL CHECK (target_delta >= -1 AND target_delta <= 1),
-          move_position_delta REAL NOT NULL DEFAULT 0 CHECK (move_position_delta >= -1 AND move_position_delta <= 1),
-          tv_id INTEGER,
-          record_type TEXT NOT NULL CHECK (record_type IN ('position', 'order')),
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-
-      // 复制数据，为move_position_delta设置默认值0
-      this.db.exec(`
-        INSERT INTO delta_records_new (id, account_id, instrument_name, order_id, target_delta, move_position_delta, tv_id, record_type, created_at, updated_at)
-        SELECT id, account_id, instrument_name, order_id, target_delta, 0, tv_id, record_type, created_at, updated_at
-        FROM delta_records
-      `);
-
-      // 删除旧表
-      this.db.exec('DROP TABLE delta_records');
-
-      // 重命名新表
-      this.db.exec('ALTER TABLE delta_records_new RENAME TO delta_records');
-    });
-
-    transaction();
-    console.log('✅ move_position_delta字段已添加');
-  }
-
-  /**
-   * 重建表以添加min_expire_days字段
-   */
-  private rebuildTableWithMinExpireDays(): void {
-    const transaction = this.db.transaction(() => {
-      // 创建新表
-      this.db.exec(`
-        CREATE TABLE delta_records_new (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          account_id TEXT NOT NULL,
-          instrument_name TEXT NOT NULL,
-          order_id TEXT,
-          target_delta REAL NOT NULL CHECK (target_delta >= -1 AND target_delta <= 1),
-          move_position_delta REAL NOT NULL DEFAULT 0 CHECK (move_position_delta >= -1 AND move_position_delta <= 1),
-          min_expire_days INTEGER CHECK (min_expire_days IS NULL OR min_expire_days > 0),
-          tv_id INTEGER,
-          record_type TEXT NOT NULL CHECK (record_type IN ('position', 'order')),
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-
-      // 复制数据，为min_expire_days设置默认值null
-      this.db.exec(`
-        INSERT INTO delta_records_new (id, account_id, instrument_name, order_id, target_delta, move_position_delta, min_expire_days, tv_id, record_type, created_at, updated_at)
-        SELECT id, account_id, instrument_name, order_id, target_delta, move_position_delta, NULL, tv_id, record_type, created_at, updated_at
-        FROM delta_records
-      `);
-
-      // 删除旧表
-      this.db.exec('DROP TABLE delta_records');
-
-      // 重命名新表
-      this.db.exec('ALTER TABLE delta_records_new RENAME TO delta_records');
-    });
-
-    transaction();
-    console.log('✅ min_expire_days字段已添加');
-  }
-
-  /**
    * 初始化数据库表
    */
   private initializeTables(): void {
-    // 先检查并执行迁移
-    this.checkAndMigrate();
     const createTableSQL = `
       CREATE TABLE IF NOT EXISTS delta_records (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -349,6 +66,7 @@ export class DeltaManager {
         move_position_delta REAL NOT NULL DEFAULT 0 CHECK (move_position_delta >= -1 AND move_position_delta <= 1),
         min_expire_days INTEGER CHECK (min_expire_days IS NULL OR min_expire_days > 0),
         tv_id INTEGER,
+        action TEXT CHECK (action IN ('open_long', 'open_short', 'close_long', 'close_short', 'reduce_long', 'reduce_short', 'stop_long', 'stop_short')),
         record_type TEXT NOT NULL CHECK (record_type IN ('position', 'order')),
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -360,6 +78,7 @@ export class DeltaManager {
       'CREATE INDEX IF NOT EXISTS idx_instrument_name ON delta_records(instrument_name)',
       'CREATE INDEX IF NOT EXISTS idx_order_id ON delta_records(order_id)',
       'CREATE INDEX IF NOT EXISTS idx_tv_id ON delta_records(tv_id)',
+      'CREATE INDEX IF NOT EXISTS idx_action ON delta_records(action)',
       'CREATE INDEX IF NOT EXISTS idx_record_type ON delta_records(record_type)',
       'CREATE INDEX IF NOT EXISTS idx_account_instrument ON delta_records(account_id, instrument_name)',
       // 唯一约束：同一账户的同一合约只能有一个仓位记录
@@ -393,8 +112,8 @@ export class DeltaManager {
    */
   public createRecord(input: CreateDeltaRecordInput): DeltaRecord {
     const insertSQL = `
-      INSERT INTO delta_records (account_id, instrument_name, order_id, target_delta, move_position_delta, min_expire_days, tv_id, record_type)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO delta_records (account_id, instrument_name, order_id, target_delta, move_position_delta, min_expire_days, tv_id, action, record_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     try {
@@ -407,6 +126,7 @@ export class DeltaManager {
         input.move_position_delta,
         input.min_expire_days,
         input.tv_id,
+        input.action || null,
         input.record_type
       );
 
@@ -463,6 +183,11 @@ export class DeltaManager {
       params.push(query.tv_id);
     }
 
+    if (query.action) {
+      selectSQL += ' AND action = ?';
+      params.push(query.action);
+    }
+
     if (query.record_type) {
       selectSQL += ' AND record_type = ?';
       params.push(query.record_type);
@@ -504,6 +229,11 @@ export class DeltaManager {
     if (input.tv_id !== undefined) {
       fields.push('tv_id = ?');
       params.push(input.tv_id);
+    }
+
+    if (input.action !== undefined) {
+      fields.push('action = ?');
+      params.push(input.action);
     }
 
     if (fields.length === 0) {
@@ -698,7 +428,8 @@ export class DeltaManager {
           target_delta: input.target_delta,
           move_position_delta: input.move_position_delta,
           min_expire_days: input.min_expire_days,
-          tv_id: input.tv_id
+          tv_id: input.tv_id,
+          action: input.action
         });
         if (!updated) {
           throw new Error('更新现有仓位记录失败');

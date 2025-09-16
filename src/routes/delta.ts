@@ -1,13 +1,15 @@
 import { Router } from 'express';
 import path from 'path';
-import { 
-  ConfigLoader, 
-  DeltaManager, 
-  CreateDeltaRecordInput, 
-  DeltaRecordType,
-  DeribitAuth
-} from '../services';
 import { DeribitPrivateAPI, createAuthInfo, getConfigByEnvironment } from '../api';
+import { validateAccountFromParams } from '../middleware/account-validation';
+import {
+    ConfigLoader,
+    CreateDeltaRecordInput,
+    DeltaManager,
+    DeltaRecordType
+} from '../services';
+import { getAuthenticationService } from '../services/authentication-service';
+import { ApiResponse } from '../utils/response-formatter';
 
 const router = Router();
 
@@ -21,21 +23,14 @@ router.get('/delta', (req, res) => {
 });
 
 // Get Delta records for account
-router.get('/api/delta/:accountId', async (req, res) => {
+router.get('/api/delta/:accountId', validateAccountFromParams('accountId'), async (req, res) => {
   try {
     const { accountId } = req.params;
     const configLoader = ConfigLoader.getInstance();
     const deltaManager = DeltaManager.getInstance();
 
-    // Validate account exists
-    const account = configLoader.getAccountByName(accountId);
-    if (!account) {
-      return res.status(404).json({
-        success: false,
-        message: `Account not found: ${accountId}`,
-        timestamp: new Date().toISOString()
-      });
-    }
+    // Account validation is now handled by middleware
+    // req.validatedAccount contains the validated account
 
     // Get Delta records
     const records = deltaManager.getRecords({ account_id: accountId });
@@ -43,8 +38,7 @@ router.get('/api/delta/:accountId', async (req, res) => {
     // Get account summary
     const summary = deltaManager.getAccountSummary(accountId);
 
-    res.json({
-      success: true,
+    return ApiResponse.ok(res, {
       accountId,
       records,
       summary: summary[0] || {
@@ -53,21 +47,15 @@ router.get('/api/delta/:accountId', async (req, res) => {
         position_delta: 0,
         order_delta: 0,
         record_count: 0
-      },
-      timestamp: new Date().toISOString()
+      }
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get delta records',
-      error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString()
-    });
+    return ApiResponse.internalError(res, error instanceof Error ? error.message : 'Unknown error');
   }
 });
 
 // Get live data for account (positions and orders)
-router.get('/api/delta/:accountId/live-data', async (req, res) => {
+router.get('/api/delta/:accountId/live-data', validateAccountFromParams('accountId'), async (req, res) => {
   try {
     const { accountId } = req.params;
     const configLoader = ConfigLoader.getInstance();
@@ -75,15 +63,8 @@ router.get('/api/delta/:accountId/live-data', async (req, res) => {
 
     console.log(`🎯 Live data request: accountId=${accountId}, mockMode=${useMockMode} (all currencies)`);
 
-    // Validate account exists
-    const account = configLoader.getAccountByName(accountId);
-    if (!account) {
-      return res.status(404).json({
-        success: false,
-        message: `Account not found: ${accountId}`,
-        timestamp: new Date().toISOString()
-      });
-    }
+    // Account validation is now handled by middleware
+    // req.validatedAccount contains the validated account
 
     let positions = [];
     let openOrders = [];
@@ -146,19 +127,18 @@ router.get('/api/delta/:accountId/live-data', async (req, res) => {
       console.log(`🔗 Using real Deribit API for ${accountId}`);
       try {
         console.log(`🔐 Authenticating account: ${accountId}`);
-        const deribitAuth = new DeribitAuth();
-        await deribitAuth.authenticate(accountId);
-        const tokenInfo = deribitAuth.getTokenInfo(accountId);
-
-        if (!tokenInfo) {
-          throw new Error('Authentication failed - no token info');
+        // 使用统一认证服务
+        const authResult = await getAuthenticationService().authenticate(accountId);
+        
+        if (!authResult.success || !authResult.token) {
+          throw new Error(authResult.error || 'Authentication failed - no token info');
         }
 
         console.log(`✅ Authentication successful for ${accountId}`);
 
         const isTestEnv = process.env.USE_TEST_ENVIRONMENT === 'true';
         const apiConfig = getConfigByEnvironment(isTestEnv);
-        const authInfo = createAuthInfo(tokenInfo.accessToken);
+        const authInfo = createAuthInfo(authResult.token.accessToken);
 
         console.log(`🌐 Using ${isTestEnv ? 'TEST' : 'PRODUCTION'} environment: ${apiConfig.baseUrl}`);
 
@@ -225,16 +205,15 @@ router.get('/api/delta/:accountId/live-data', async (req, res) => {
       }
     }
 
-    res.json({
-      success: true,
-      accountId,
-      currencies: ['BTC', 'ETH', 'SOL'],
-      mockMode: useMockMode,
-      data: {
-        positions,
-        openOrders
-      },
-      timestamp: new Date().toISOString()
+    return ApiResponse.ok(res, {
+      positions,
+      openOrders
+    }, {
+      meta: {
+        accountId,
+        currencies: ['BTC', 'ETH', 'SOL'],
+        mockMode: useMockMode
+      }
     });
   } catch (error) {
     res.status(500).json({
@@ -247,10 +226,10 @@ router.get('/api/delta/:accountId/live-data', async (req, res) => {
 });
 
 // Create or update Delta record
-router.post('/api/delta/:accountId', async (req, res) => {
+router.post('/api/delta/:accountId', validateAccountFromParams('accountId'), async (req, res) => {
   try {
     const { accountId } = req.params;
-    const { instrument_name, delta, target_delta, move_position_delta, min_expire_days, tv_id, record_type, order_id } = req.body;
+    const { instrument_name, delta, target_delta, move_position_delta, min_expire_days, tv_id, record_type, order_id, action } = req.body;
     const configLoader = ConfigLoader.getInstance();
     const deltaManager = DeltaManager.getInstance();
 
@@ -261,31 +240,16 @@ router.post('/api/delta/:accountId', async (req, res) => {
 
     // Validate required fields
     if (!instrument_name || finalTargetDelta === undefined || !record_type) {
-      return res.status(400).json({
-        success: false,
-        message: 'Missing required fields: instrument_name, target_delta (or delta), record_type',
-        timestamp: new Date().toISOString()
-      });
+      return ApiResponse.badRequest(res, 'Missing required fields: instrument_name, target_delta (or delta), record_type');
     }
 
     // Validate min_expire_days if provided
     if (finalMinExpireDays !== null && finalMinExpireDays <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'min_expire_days must be greater than 0 or null',
-        timestamp: new Date().toISOString()
-      });
+      return ApiResponse.badRequest(res, 'min_expire_days must be greater than 0 or null');
     }
 
-    // Validate account exists
-    const account = configLoader.getAccountByName(accountId);
-    if (!account) {
-      return res.status(404).json({
-        success: false,
-        message: `Account not found: ${accountId}`,
-        timestamp: new Date().toISOString()
-      });
-    }
+    // Account validation is now handled by middleware
+    // req.validatedAccount contains the validated account
 
     // Create Delta record
     const recordInput: CreateDeltaRecordInput = {
@@ -295,18 +259,14 @@ router.post('/api/delta/:accountId', async (req, res) => {
       move_position_delta: parseFloat(finalMovePositionDelta),
       min_expire_days: finalMinExpireDays !== null ? parseInt(finalMinExpireDays) : null,
       tv_id: tv_id ? parseInt(tv_id) : null,
+      action: action || null,
       record_type: record_type as DeltaRecordType,
       order_id: order_id || undefined
     };
 
     const record = deltaManager.upsertRecord(recordInput);
 
-    res.json({
-      success: true,
-      message: 'Delta record created/updated successfully',
-      record,
-      timestamp: new Date().toISOString()
-    });
+    return ApiResponse.ok(res, record, { message: 'Delta record created/updated successfully' });
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -318,40 +278,25 @@ router.post('/api/delta/:accountId', async (req, res) => {
 });
 
 // Update Delta record
-router.put('/api/delta/:accountId/:recordId', async (req, res) => {
+router.put('/api/delta/:accountId/:recordId', validateAccountFromParams('accountId'), async (req, res) => {
   try {
     const { accountId, recordId } = req.params;
     const { target_delta, move_position_delta, min_expire_days, tv_id, order_id } = req.body;
     const configLoader = ConfigLoader.getInstance();
     const deltaManager = DeltaManager.getInstance();
 
-    // Validate account exists
-    const account = configLoader.getAccountByName(accountId);
-    if (!account) {
-      return res.status(404).json({
-        success: false,
-        message: `Account not found: ${accountId}`,
-        timestamp: new Date().toISOString()
-      });
-    }
+    // Account validation is now handled by middleware
+    // req.validatedAccount contains the validated account
 
     // Validate record exists and belongs to account
     const existingRecord = deltaManager.getRecordById(parseInt(recordId));
     if (!existingRecord || existingRecord.account_id !== accountId) {
-      return res.status(404).json({
-        success: false,
-        message: 'Record not found or does not belong to this account',
-        timestamp: new Date().toISOString()
-      });
+      return ApiResponse.notFound(res, 'Record not found or does not belong to this account');
     }
 
     // Validate min_expire_days if provided
     if (min_expire_days !== undefined && min_expire_days !== null && min_expire_days <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'min_expire_days must be greater than 0 or null',
-        timestamp: new Date().toISOString()
-      });
+      return ApiResponse.badRequest(res, 'min_expire_days must be greater than 0 or null');
     }
 
     // Update record
@@ -365,19 +310,10 @@ router.put('/api/delta/:accountId/:recordId', async (req, res) => {
     const updatedRecord = deltaManager.updateRecord(parseInt(recordId), updateData);
 
     if (!updatedRecord) {
-      return res.status(404).json({
-        success: false,
-        message: 'Failed to update record',
-        timestamp: new Date().toISOString()
-      });
+      return ApiResponse.notFound(res, 'Failed to update record');
     }
 
-    res.json({
-      success: true,
-      message: 'Delta record updated successfully',
-      record: updatedRecord,
-      timestamp: new Date().toISOString()
-    });
+    return ApiResponse.ok(res, updatedRecord, { message: 'Delta record updated successfully' });
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -389,48 +325,29 @@ router.put('/api/delta/:accountId/:recordId', async (req, res) => {
 });
 
 // Delete Delta record
-router.delete('/api/delta/:accountId/:recordId', async (req, res) => {
+router.delete('/api/delta/:accountId/:recordId', validateAccountFromParams('accountId'), async (req, res) => {
   try {
     const { accountId, recordId } = req.params;
     const configLoader = ConfigLoader.getInstance();
     const deltaManager = DeltaManager.getInstance();
 
-    // Validate account exists
-    const account = configLoader.getAccountByName(accountId);
-    if (!account) {
-      return res.status(404).json({
-        success: false,
-        message: `Account not found: ${accountId}`,
-        timestamp: new Date().toISOString()
-      });
-    }
+    // Account validation is now handled by middleware
+    // req.validatedAccount contains the validated account
 
     // Validate record exists and belongs to account
     const existingRecord = deltaManager.getRecordById(parseInt(recordId));
     if (!existingRecord || existingRecord.account_id !== accountId) {
-      return res.status(404).json({
-        success: false,
-        message: 'Record not found or does not belong to this account',
-        timestamp: new Date().toISOString()
-      });
+      return ApiResponse.notFound(res, 'Record not found or does not belong to this account');
     }
 
     // Delete record
     const deleted = deltaManager.deleteRecord(parseInt(recordId));
 
     if (!deleted) {
-      return res.status(404).json({
-        success: false,
-        message: 'Failed to delete record',
-        timestamp: new Date().toISOString()
-      });
+      return ApiResponse.notFound(res, 'Failed to delete record');
     }
 
-    res.json({
-      success: true,
-      message: 'Delta record deleted successfully',
-      timestamp: new Date().toISOString()
-    });
+    return ApiResponse.ok(res, null, { message: 'Delta record deleted successfully' });
   } catch (error) {
     res.status(500).json({
       success: false,

@@ -3,11 +3,11 @@
  * 将原来的 handleNonImmediateOrder, recordPositionInfoToDatabase, sendOrderNotification 重构为纯函数
  */
 
-import { OptionTradingParams } from '../types';
-import type { DetailedPositionInfo } from '../types/position-info';
+import { ConfigLoader } from '../config';
 import { DeltaManager } from '../database/delta-manager';
 import { DeltaRecordType } from '../database/types';
-import { ConfigLoader } from '../config';
+import { OptionTradingParams } from '../types';
+import type { DetailedPositionInfo } from '../types/position-info';
 
 // 依赖注入接口
 export interface OrderSupportDependencies {
@@ -27,6 +27,11 @@ export interface OrderNotificationInfo {
   averagePrice: number;
   success: boolean;
   extraMsg?: string;
+  bestBidPrice?: number;
+  bestAskPrice?: number;
+  tickSize?: number;                     // 价格最小步进
+  spreadRatio?: number;                  // 价差比率
+  tickMultiple?: number;                 // 价差步进倍数
 }
 
 /**
@@ -73,6 +78,7 @@ export async function handleNonImmediateOrder(
         min_expire_days: params.n || null, // 使用n参数作为最小到期天数，如果没有则为null
         order_id: recordType === DeltaRecordType.ORDER ? (orderResult.order?.order_id || '') : null,
         tv_id: params.tv_id || null, // 从webhook payload中获取TradingView信号ID
+        action: params.action, // 记录交易动作
         record_type: recordType
       };
 
@@ -145,6 +151,7 @@ export async function recordPositionInfoToDatabase(
       move_position_delta: Math.max(-1, Math.min(1, movePositionDelta)), // 确保在[-1, 1]范围内
       min_expire_days: params.n || null, // 使用n参数作为最小到期天数，如果没有则为null
       tv_id: params.tv_id || null, // 从webhook payload中获取TradingView信号ID
+      action: params.action, // 记录交易动作
       record_type: DeltaRecordType.POSITION // 策略完成后记录为仓位
     };
 
@@ -198,17 +205,33 @@ export async function sendOrderNotification(
     const directionText = orderInfo.direction === 'buy' ? '买入' : '卖出';
     const orderStateText = getOrderStateText(orderInfo.orderState);
 
+    // 构建盘口信息
+    let marketInfo = '';
+    if (orderInfo.bestBidPrice !== undefined && orderInfo.bestAskPrice !== undefined) {
+      marketInfo = ` | 买1: $${orderInfo.bestBidPrice} 卖1: $${orderInfo.bestAskPrice}`;
+
+      // 添加价差信息
+      if (orderInfo.spreadRatio !== undefined) {
+        marketInfo += `\n📊 价差比率: ${(orderInfo.spreadRatio * 100).toFixed(2)}%`;
+      }
+
+      // 添加步进倍数信息
+      if (orderInfo.tickMultiple !== undefined && orderInfo.tickSize !== undefined) {
+        marketInfo += ` | 步进倍数: ${orderInfo.tickMultiple.toFixed(1)} (步长: ${orderInfo.tickSize})`;
+      }
+    }
+
     const notificationContent = `${statusIcon} **期权交易${statusText}**
 
 👤 账户: ${accountName}
 🎯 合约: ${orderInfo.instrumentName}
 📊 操作: ${directionText} ${orderInfo.quantity} 张
-💰 价格: $${orderInfo.price.toFixed(4)}
+💰 价格: $${orderInfo.price}${marketInfo}
 🆔 订单ID: ${orderInfo.orderId}
 📈 状态: ${orderStateText}
 ${orderInfo.extraMsg ? `ℹ️ ${orderInfo.extraMsg}` : ''}
 ${orderInfo.filledAmount > 0 ? `✅ 成交数量: ${orderInfo.filledAmount} 张` : ''}
-${orderInfo.averagePrice > 0 ? `💵 成交均价: $${orderInfo.averagePrice.toFixed(4)}` : ''}
+${orderInfo.averagePrice > 0 ? `💵 成交均价: $${orderInfo.averagePrice}` : ''}
 ⏰ 时间: ${new Date().toLocaleString('zh-CN')}`;
 
     await bot.sendMarkdown(notificationContent);

@@ -267,6 +267,7 @@
         <div class="header">
             <h1>🎯 Deribit期权交易系统</h1>
             <p>专业的期权交易自动化平台，支持TradingView信号和Delta管理</p>
+            <p id="versionInfo" style="font-size: 0.9em; margin-top: 10px; opacity: 0.8;">版本 v1.1.0</p>
         </div>
 
         <div class="main-content">
@@ -444,9 +445,10 @@
             }
         }, 1000); // 等待1秒确保 axios 加载完成
 
-        // 页面加载时获取账户信息
+        // 页面加载时获取账户信息和版本信息
         document.addEventListener('DOMContentLoaded', function() {
             loadAccounts();
+            loadVersion();
 
             // 添加功能卡片点击事件监听器
             document.querySelectorAll('.feature-card').forEach(card => {
@@ -458,6 +460,25 @@
                 });
             });
         });
+
+        // 加载版本信息
+        async function loadVersion() {
+            try {
+                const response = await httpClient.get('/api/status');
+                const data = response.data;
+                
+                const version = data.version || '1.0.0';
+                const versionElement = document.getElementById('versionInfo');
+                if (versionElement) {
+                    versionElement.textContent = `版本 v${version}`;
+                }
+                
+                console.log(`📦 系统版本: v${version}`);
+            } catch (error) {
+                console.error('Failed to load version info:', error);
+                // 保持默认版本显示
+            }
+        }
 
         // 加载账户列表
         async function loadAccounts() {

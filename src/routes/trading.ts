@@ -7,6 +7,11 @@ import {
   OptionTradingService 
 } from '../services';
 import { DeribitPrivateAPI, createAuthInfo, getConfigByEnvironment } from '../api';
+import { getConfigLoader, getDeribitClient, getMockDeribitClient, getDeribitAuth, getOptionTradingService, getClientFactory } from '../core';
+import { validateAccountFromParams } from '../middleware/account-validation';
+import { getUnifiedClient } from '../factory/client-factory';
+import { getAuthenticationService } from '../services/authentication-service';
+import { ApiResponse } from '../utils/response-formatter';
 
 const router = Router();
 
@@ -15,42 +20,20 @@ router.get('/api/instruments', async (req, res) => {
   try {
     const currency = req.query.currency as string || 'BTC';
     const kind = req.query.kind as string || 'option';
-    const useMockMode = process.env.USE_MOCK_MODE === 'true';
-
-    if (useMockMode) {
-      const mockClient = new MockDeribitClient();
-      const instruments = await mockClient.getInstruments(currency, kind);
-      
-      res.json({
-        success: true,
-        mockMode: true,
-        currency,
-        kind,
-        count: instruments.length,
-        instruments,
-        timestamp: new Date().toISOString()
-      });
-    } else {
-      const deribitClient = new DeribitClient();
-      const instruments = await deribitClient.getInstruments(currency, kind);
-      
-      res.json({
-        success: true,
-        mockMode: false,
-        currency,
-        kind,
-        count: instruments.length,
-        instruments,
-        timestamp: new Date().toISOString()
-      });
-    }
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get instruments',
-      error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString()
+    
+    // 使用统一客户端，自动处理Mock/Real模式
+    const client = getUnifiedClient();
+    const instruments = await client.getInstruments(currency, kind);
+    
+    return ApiResponse.ok(res, {
+      mockMode: client.isMock,
+      currency,
+      kind,
+      count: instruments.length,
+      instruments
     });
+  } catch (error) {
+    return ApiResponse.internalError(res, error instanceof Error ? error.message : 'Unknown error');
   }
 });
 
@@ -60,108 +43,73 @@ router.get('/api/instrument/:instrumentName', async (req, res) => {
     const instrumentName = req.params.instrumentName;
     
     if (!instrumentName) {
-      return res.status(400).json({
-        success: false,
-        message: 'Instrument name is required',
-        timestamp: new Date().toISOString()
-      });
+      return ApiResponse.badRequest(res, 'Instrument name is required');
     }
 
-    const useMockMode = process.env.USE_MOCK_MODE === 'true';
-
-    if (useMockMode) {
-      const mockClient = new MockDeribitClient();
-      const instrument = await mockClient.getInstrument(instrumentName);
-      
-      res.json({
-        success: true,
-        mockMode: true,
-        instrumentName,
-        instrument,
-        timestamp: new Date().toISOString()
-      });
-    } else {
-      const deribitClient = new DeribitClient();
-      const instrument = await deribitClient.getInstrument(instrumentName);
-      
-      res.json({
-        success: true,
-        mockMode: false,
-        instrumentName,
-        instrument,
-        timestamp: new Date().toISOString()
-      });
-    }
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get instrument',
-      error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString()
+    // 使用统一客户端，自动处理Mock/Real模式
+    const client = getUnifiedClient();
+    const instrument = await client.getInstrument(instrumentName);
+    
+    return ApiResponse.ok(res, {
+      mockMode: client.isMock,
+      instrumentName,
+      instrument
     });
+  } catch (error) {
+    return ApiResponse.internalError(res, error instanceof Error ? error.message : 'Unknown error');
   }
 });
 
 // Get account positions endpoint
-router.get('/api/account/:accountName/:currency', async (req, res) => {
+router.get('/api/account/:accountName/:currency', validateAccountFromParams('accountName'), async (req, res) => {
   try {
     const { accountName, currency } = req.params;
     const currencyUpper = currency.toUpperCase();
-    const configLoader = ConfigLoader.getInstance();
+    
+    // Account validation is now handled by middleware
+    // req.validatedAccount contains the validated account
 
-    // Validate account
-    const account = configLoader.getAccountByName(accountName);
-    if (!account) {
-      return res.status(404).json({
-        success: false,
-        message: `Account not found: ${accountName}`,
-        timestamp: new Date().toISOString()
-      });
-    }
+    // 使用统一客户端，自动处理Mock/Real模式
+    const client = getUnifiedClient();
 
-    const useMockMode = process.env.USE_MOCK_MODE === 'true';
-
-    if (useMockMode) {
+    if (client.isMock) {
       // Mock mode: return simulated data
-      const mockClient = new MockDeribitClient();
-      const summary = await mockClient.getAccountSummary(currencyUpper);
+      const summary = await client.getAccountSummary(currencyUpper);
       
-      res.json({
-        success: true,
-        mockMode: true,
-        accountName,
-        currency: currencyUpper,
-        data: {
-          summary,
-          positions: [
-            {
-              instrument_name: `${currencyUpper}-25JUL25-50000-C`,
-              size: 10.5,
-              direction: 'buy',
-              average_price: 0.025,
-              mark_price: 0.028,
-              unrealized_pnl: 0.315,
-              delta: 0.65
-            }
-          ]
-        },
-        timestamp: new Date().toISOString()
+      return ApiResponse.ok(res, {
+        summary,
+        positions: [
+          {
+            instrument_name: `${currencyUpper}-25JUL25-50000-C`,
+            size: 10.5,
+            direction: 'buy',
+            average_price: 0.025,
+            mark_price: 0.028,
+            unrealized_pnl: 0.315,
+            delta: 0.65
+          }
+        ]  
+      }, {
+        meta: { 
+          mockMode: true, 
+          accountName, 
+          currency: currencyUpper 
+        } 
       });
     } else {
       // Real mode: call Deribit API
       try {
-        const deribitAuth = new DeribitAuth();
-        await deribitAuth.authenticate(accountName);
-        const tokenInfo = deribitAuth.getTokenInfo(accountName);
-
-        if (!tokenInfo) {
-          throw new Error('Authentication failed');
+        // 使用统一认证服务
+        const authResult = await getAuthenticationService().authenticate(accountName);
+        
+        if (!authResult.success || !authResult.token) {
+          throw new Error(authResult.error || 'Authentication failed');
         }
 
         // Configure API
         const isTestEnv = process.env.USE_TEST_ENVIRONMENT === 'true';
         const apiConfig = getConfigByEnvironment(isTestEnv);
-        const authInfo = createAuthInfo(tokenInfo.accessToken);
+        const authInfo = createAuthInfo(authResult.token.accessToken);
 
         // Create private API instance
         const privateAPI = new DeribitPrivateAPI(apiConfig, authInfo);
@@ -177,58 +125,40 @@ router.get('/api/account/:accountName/:currency', async (req, res) => {
           })
         ]);
 
-        res.json({
-          success: true,
-          mockMode: false,
-          accountName,
-          currency: currencyUpper,
-          data: {
-            summary: accountSummary,
-            positions: positions,
-            timestamp: new Date().toISOString()
-          }
+        return ApiResponse.ok(res, {
+          summary: accountSummary,
+          positions: positions,
+          timestamp: new Date().toISOString()
+        }, { 
+          meta: { 
+            mockMode: false, 
+            accountName, 
+            currency: currencyUpper 
+          } 
         });
 
       } catch (authError) {
         console.error(`Authentication error for account ${accountName}:`, authError);
-        res.status(401).json({
-          success: false,
-          message: 'Authentication failed',
-          accountName,
-          error: authError instanceof Error ? authError.message : 'Unknown auth error',
-          timestamp: new Date().toISOString()
+        return ApiResponse.unauthorized(res, authError instanceof Error ? authError.message : 'Unknown auth error', { 
+          meta: { accountName } 
         });
       }
     }
   } catch (error) {
     console.error('Error in account positions endpoint:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get account positions',
-      error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString()
-    });
+    return ApiResponse.internalError(res, error instanceof Error ? error.message : 'Unknown error');
   }
 });
 
 // Trading service status
 router.get('/api/trading/status', async (req, res) => {
   try {
-    const optionTradingService = new OptionTradingService();
+    const optionTradingService = getOptionTradingService();
     const status = await optionTradingService.getTradingStatus();
     
-    res.json({
-      success: true,
-      data: status,
-      timestamp: new Date().toISOString()
-    });
+    return ApiResponse.ok(res, status);
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get trading status',
-      error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString()
-    });
+    return ApiResponse.internalError(res, error instanceof Error ? error.message : 'Unknown error');
   }
 });
 
@@ -244,72 +174,46 @@ router.get('/api/options/:currency/delta/:delta', async (req, res) => {
     const longSideValue = (longSide as string).toLowerCase() === 'true';
 
     if (isNaN(deltaValue) || deltaValue < -1 || deltaValue > 1) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid delta value. Must be between -1 and 1',
-        timestamp: new Date().toISOString()
-      });
+      return ApiResponse.badRequest(res, 'Invalid delta value. Must be between -1 and 1');
     }
 
     if (isNaN(minExpiredDaysValue) || minExpiredDaysValue < 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid minExpiredDays value. Must be a positive number',
-        timestamp: new Date().toISOString()
-      });
+      return ApiResponse.badRequest(res, 'Invalid minExpiredDays value. Must be a positive number');
     }
 
     console.log(`🎯 Finding option by delta: ${currency}, delta: ${deltaValue}, minExpiredDays: ${minExpiredDaysValue}, longSide: ${longSideValue}`);
 
-    const useMockMode = process.env.USE_MOCK_MODE === 'true';
-    let result;
-
-    if (useMockMode) {
-      const mockClient = new MockDeribitClient();
-      result = await mockClient.getInstrumentByDelta(currency.toUpperCase(), minExpiredDaysValue, deltaValue, longSideValue);
-    } else {
-      const deribitClient = new DeribitClient();
-      result = await deribitClient.getInstrumentByDelta(currency.toUpperCase(), minExpiredDaysValue, deltaValue, longSideValue);
-    }
+    // 使用统一客户端，自动处理Mock/Real模式
+    const client = getUnifiedClient();
+    const result = await client.getInstrumentByDelta(currency.toUpperCase(), minExpiredDaysValue, deltaValue, longSideValue, currency.toUpperCase());
 
     if (result) {
-      res.json({
-        success: true,
-        message: `Found optimal option for delta ${deltaValue}`,
-        data: {
-          instrument: result,
-          searchParams: {
-            currency: currency.toUpperCase(),
-            targetDelta: deltaValue,
-            minExpiredDays: minExpiredDaysValue,
-            longSide: longSideValue,
-            optionType: longSideValue ? 'call' : 'put'
-          }
-        },
-        timestamp: new Date().toISOString()
-      });
-    } else {
-      res.status(404).json({
-        success: false,
-        message: `No suitable option found for delta ${deltaValue}`,
+      return ApiResponse.ok(res, {
+        instrument: result,
         searchParams: {
           currency: currency.toUpperCase(),
           targetDelta: deltaValue,
           minExpiredDays: minExpiredDaysValue,
-          longSide: longSideValue
-        },
-        timestamp: new Date().toISOString()
+          longSide: longSideValue,
+          optionType: longSideValue ? 'call' : 'put'
+        }
+      }, { message: `Found optimal option for delta ${deltaValue}` });
+    } else {
+      return ApiResponse.notFound(res, `No suitable option found for delta ${deltaValue}`, {
+        meta: {
+          searchParams: {
+            currency: currency.toUpperCase(),
+            targetDelta: deltaValue,
+            minExpiredDays: minExpiredDaysValue,
+            longSide: longSideValue
+          }
+        }
       });
     }
 
   } catch (error) {
     console.error('Error in delta filter endpoint:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to find option by delta',
-      error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString()
-    });
+    return ApiResponse.internalError(res, error instanceof Error ? error.message : 'Unknown error');
   }
 });
 

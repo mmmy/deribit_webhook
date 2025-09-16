@@ -6,7 +6,7 @@
 import { ConfigLoader } from '../config';
 import { OptionTradingParams, OptionTradingResult } from '../types';
 import { correctOrderParameters, correctOrderPrice } from '../utils/price-correction';
-import { calculateSpreadRatio, formatSpreadRatioAsPercentage, isSpreadTooWide } from '../utils/spread-calculation';
+import { calculateSpreadRatio, calculateSpreadTickMultiple, formatSpreadRatioAsPercentage } from '../utils/spread-calculation';
 import { DeribitAuth } from './auth';
 import { DeribitClient } from './deribit-client';
 import { MockDeribitClient } from './mock-deribit';
@@ -136,9 +136,22 @@ async function handleRealOrder(
   console.log('盘口价差:', formatSpreadRatioAsPercentage(spreadRatio));
 
   const spreadRatioThreshold = parseFloat(process.env.SPREAD_RATIO_THRESHOLD || '0.15');
-  
-  if (isSpreadTooWide(optionDetails.best_bid_price, optionDetails.best_ask_price, spreadRatioThreshold)) {
-    return await handleWideSpreadOrder(instrumentName, params, finalQuantity, finalPrice, spreadRatio, tokenInfo.accessToken, dependencies);
+  const spreadTickThreshold = parseInt(process.env.SPREAD_TICK_MULTIPLE_THRESHOLD || '2', 10);
+
+  // 使用新的综合价差判断逻辑
+  const { isSpreadReasonable } = await import('../utils/spread-calculation');
+  const isReasonable = isSpreadReasonable(
+    optionDetails.best_bid_price,
+    optionDetails.best_ask_price,
+    instrumentInfo.tick_size,
+    spreadRatioThreshold,
+    spreadTickThreshold
+  );
+
+  console.log(`价差检查: 比率=${formatSpreadRatioAsPercentage(spreadRatio)}, 步进倍数=${((optionDetails.best_ask_price - optionDetails.best_bid_price) / instrumentInfo.tick_size).toFixed(1)}, 合理=${isReasonable}`);
+
+  if (!isReasonable) {
+    return await handleWideSpreadOrder(instrumentName, params, finalQuantity, finalPrice, spreadRatio, instrumentInfo, optionDetails, tokenInfo.accessToken, dependencies);
   } else {
     return await handleNarrowSpreadOrder(instrumentName, params, finalQuantity, finalPrice, spreadRatio, instrumentInfo, optionDetails, tokenInfo.accessToken, dependencies);
   }
@@ -164,8 +177,8 @@ function calculateOrderParameters(
   if (params.qtyType === 'cash') {
     if (instrumentInfo.settlement_currency === 'USDC') {
       // USDC期权：qtyType=cash表示USDC价值，直接使用不需要换算
-      orderQuantity = params.quantity;
-      console.log(`💰 USDC Cash mode: using ${params.quantity} USDC directly as quantity`);
+      orderQuantity = params.quantity / entryPrice;
+      console.log(`💰 USDC Cash mode: converting $${params.quantity} to ${orderQuantity} contracts by dividing by entry price ${entryPrice}`);
     } else {
       // 传统期权：需要根据期权价格和指数价格换算
       orderQuantity = params.quantity / (entryPrice * optionDetails.index_price);
@@ -204,6 +217,8 @@ async function handleWideSpreadOrder(
   finalQuantity: number,
   finalPrice: number,
   spreadRatio: number,
+  instrumentInfo: any,
+  optionDetails: any,
   accessToken: string,
   dependencies: PlaceOrderDependencies
 ): Promise<OptionTradingResult> {
@@ -224,6 +239,9 @@ async function handleWideSpreadOrder(
   const spreadPercentage = (spreadRatio * 100).toFixed(1);
   const extraMsg = `盘口价差过大: ${spreadPercentage}%`;
 
+  // 计算步进倍数信息
+  const tickMultiple = calculateSpreadTickMultiple(optionDetails.best_bid_price, optionDetails.best_ask_price, instrumentInfo.tick_size);
+
   const orderInfo: OrderNotificationInfo = {
     instrumentName,
     direction: orderResult.order?.direction,
@@ -234,7 +252,12 @@ async function handleWideSpreadOrder(
     filledAmount: orderResult.order?.filled_amount || 0,
     averagePrice: orderResult.order?.average_price || 0,
     success: true,
-    extraMsg: extraMsg
+    extraMsg: extraMsg,
+    bestBidPrice: optionDetails.best_bid_price,
+    bestAskPrice: optionDetails.best_ask_price,
+    tickSize: instrumentInfo.tick_size,
+    spreadRatio: spreadRatio,
+    tickMultiple: tickMultiple
   };
 
   await sendOrderNotificationPure(params.accountName, orderInfo, dependencies.orderSupportDependencies);
@@ -311,6 +334,7 @@ async function handleNarrowSpreadOrder(
 
     // 发送成功通知到企业微信
     const spreadPercentage = (spreadRatio * 100).toFixed(1);
+    const tickMultiple = calculateSpreadTickMultiple(optionDetails.best_bid_price, optionDetails.best_ask_price, instrumentInfo.tick_size);
     const extraMsg = `盘口价差: ${spreadPercentage}% (渐进式策略)`;
 
     const orderInfo: OrderNotificationInfo = {
@@ -323,7 +347,12 @@ async function handleNarrowSpreadOrder(
       filledAmount: strategyResult.executedQuantity || finalQuantity,
       averagePrice: strategyResult.averagePrice || finalPrice,
       success: true,
-      extraMsg: extraMsg
+      extraMsg: extraMsg,
+      bestBidPrice: optionDetails.best_bid_price,
+      bestAskPrice: optionDetails.best_ask_price,
+      tickSize: instrumentInfo.tick_size,
+      spreadRatio: spreadRatio,
+      tickMultiple: tickMultiple
     };
 
     await sendOrderNotificationPure(params.accountName, orderInfo, dependencies.orderSupportDependencies);
@@ -343,6 +372,7 @@ async function handleNarrowSpreadOrder(
 
     // 发送失败通知到企业微信
     const spreadPercentage = (spreadRatio * 100).toFixed(1);
+    const tickMultiple = calculateSpreadTickMultiple(optionDetails.best_bid_price, optionDetails.best_ask_price, instrumentInfo.tick_size);
     const extraMsg = `盘口价差: ${spreadPercentage}% (渐进式策略失败)`;
 
     const orderInfo: OrderNotificationInfo = {
@@ -355,7 +385,12 @@ async function handleNarrowSpreadOrder(
       filledAmount: 0,
       averagePrice: 0,
       success: false,
-      extraMsg: extraMsg
+      extraMsg: extraMsg,
+      bestBidPrice: optionDetails.best_bid_price,
+      bestAskPrice: optionDetails.best_ask_price,
+      tickSize: instrumentInfo.tick_size,
+      spreadRatio: spreadRatio,
+      tickMultiple: tickMultiple
     };
 
     await sendOrderNotificationPure(params.accountName, orderInfo, dependencies.orderSupportDependencies);
@@ -370,6 +405,70 @@ async function handleNarrowSpreadOrder(
       error: strategyResult.message
     };
   }
+}
+
+/**
+ * 提取详细的错误信息
+ */
+function extractDetailedErrorMessage(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return 'Unknown error';
+  }
+
+  let errorMsg = error.message;
+
+  // 检查是否有 Axios 响应错误
+  if ((error as any).response?.data) {
+    const responseData = (error as any).response.data;
+
+    // 检查 Deribit API 错误格式
+    if (responseData.error) {
+      const deribitError = responseData.error;
+      if (deribitError.message) {
+        errorMsg = deribitError.message;
+
+        // 添加错误代码（如果有）
+        if (deribitError.code) {
+          errorMsg += ` (代码: ${deribitError.code})`;
+        }
+
+        // 翻译常见的 Deribit 错误消息
+        const errorTranslations: { [key: string]: string } = {
+          'not_enough_funds': '资金不足',
+          'invalid_instrument_name': '无效的合约名称',
+          'invalid_quantity': '无效的数量',
+          'invalid_price': '无效的价格',
+          'order_not_found': '订单未找到',
+          'instrument_not_found': '合约未找到',
+          'insufficient_funds': '资金不足',
+          'position_not_found': '仓位未找到',
+          'invalid_direction': '无效的交易方向',
+          'market_closed': '市场已关闭',
+          'price_too_high': '价格过高',
+          'price_too_low': '价格过低',
+          'quantity_too_small': '数量过小',
+          'quantity_too_large': '数量过大'
+        };
+
+        const translatedMsg = errorTranslations[deribitError.message];
+        if (translatedMsg) {
+          errorMsg = `${translatedMsg} (${deribitError.message})`;
+          if (deribitError.code) {
+            errorMsg += ` (代码: ${deribitError.code})`;
+          }
+        }
+      }
+    }
+    // 检查其他可能的错误格式
+    else if (responseData.message) {
+      errorMsg = responseData.message;
+    }
+    else if (typeof responseData === 'string') {
+      errorMsg = responseData;
+    }
+  }
+
+  return errorMsg;
 }
 
 /**
@@ -392,20 +491,22 @@ async function handleOrderError(
     }
   }
 
-  // 发送错误通知到企业微信
-  const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+  // 提取详细的错误信息
+  const detailedErrorMsg = extractDetailedErrorMessage(error);
 
   const orderInfo: OrderNotificationInfo = {
     instrumentName,
     direction: params.direction,
-    quantity: params.quantity,
-    price: params.price || 0,
+    quantity: 0, // 错误时没有实际期权订单数量
+    price: 0, // 错误时没有实际期权订单价格
     orderId: 'N/A',
     orderState: 'error',
     filledAmount: 0,
     averagePrice: 0,
     success: false,
-    extraMsg: `错误: ${errorMsg}`
+    extraMsg: `错误: ${detailedErrorMsg} | 原始信号 - 数量:${params.quantity}, 价格:${params.price || 'market'}, 动作:${params.action}, delta1:${params.delta1 || 'N/A'}, delta2:${params.delta2 || 'N/A'}, n:${params.n || 'N/A'}`,
+    bestBidPrice: undefined,
+    bestAskPrice: undefined
   };
 
   await sendOrderNotificationPure(params.accountName, orderInfo, dependencies.orderSupportDependencies);
@@ -413,6 +514,6 @@ async function handleOrderError(
   return {
     success: false,
     message: 'Failed to place option order',
-    error: error instanceof Error ? error.message : 'Unknown error'
+    error: detailedErrorMsg
   };
 }

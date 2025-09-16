@@ -1,5 +1,7 @@
 import { ConfigLoader } from '../config';
 import { DeltaManager } from '../database/delta-manager';
+import { getUnifiedClient, isMockMode } from '../factory/client-factory';
+import { accountValidationService } from '../middleware/account-validation';
 import {
   OptionTradingAction,
   OptionTradingParams,
@@ -7,6 +9,7 @@ import {
   WebhookSignalPayload
 } from '../types';
 import { DeribitAuth } from './auth';
+import { getAuthenticationService } from './authentication-service';
 import { DeribitClient } from './deribit-client';
 import { MockDeribitClient } from './mock-deribit';
 import { OrderSupportDependencies } from './order-support-functions';
@@ -22,12 +25,19 @@ export class OptionTradingService {
   private mockClient: MockDeribitClient;
   private deltaManager: DeltaManager;
 
-  constructor() {
-    this.deribitAuth = new DeribitAuth();
-    this.configLoader = ConfigLoader.getInstance();
-    this.deribitClient = new DeribitClient();
-    this.mockClient = new MockDeribitClient();
-    this.deltaManager = new DeltaManager();
+  constructor(
+    deribitAuth?: DeribitAuth,
+    configLoader?: ConfigLoader,
+    deribitClient?: DeribitClient,
+    mockClient?: MockDeribitClient,
+    deltaManager?: DeltaManager
+  ) {
+    // 支持依赖注入，但保持向后兼容
+    this.deribitAuth = deribitAuth || new DeribitAuth();
+    this.configLoader = configLoader || ConfigLoader.getInstance();
+    this.deribitClient = deribitClient || new DeribitClient();
+    this.mockClient = mockClient || new MockDeribitClient();
+    this.deltaManager = deltaManager || DeltaManager.getInstance();
   }
 
   /**
@@ -35,25 +45,18 @@ export class OptionTradingService {
    */
   async processWebhookSignal(payload: WebhookSignalPayload): Promise<OptionTradingResult> {
     try {
-      // 1. 验证账户
-      const account = this.configLoader.getAccountByName(payload.accountName);
-      if (!account) {
-        throw new Error(`Account not found: ${payload.accountName}`);
+      // 1. 验证账户 - 使用统一的账户验证服务
+      const account = accountValidationService.validateAccount(payload.accountName);
+      console.log(`✅ Account validation successful: ${account.name} (enabled: ${account.enabled})`);
+
+      // 2. 统一认证处理 (自动处理Mock/Real模式)
+      const authResult = await getAuthenticationService().authenticate(payload.accountName);
+      
+      if (!authResult.success) {
+        throw new Error(authResult.error || 'Authentication failed');
       }
 
-      if (!account.enabled) {
-        throw new Error(`Account is disabled: ${payload.accountName}`);
-      }
-
-      // 2. 验证认证 (在Mock模式下跳过真实认证)
-      const useMockMode = process.env.USE_MOCK_MODE === 'true';
-      if (!useMockMode) {
-        await this.deribitAuth.authenticate(payload.accountName);
-        console.log(`✅ Authentication successful for account: ${payload.accountName}`);
-      } else {
-        // 🔴 DEBUG BREAKPOINT: 在这里设置断点 - Mock认证跳过
-        console.log(`✅ Mock mode - skipping authentication for account: ${payload.accountName}`);
-      }
+      console.log(`✅ Authentication successful for account: ${payload.accountName} (Mock: ${authResult.isMock})`);
 
       // 3. 解析交易信号
       // 解析tv_id并传递到交易参数中，最后触发交易存到Delta数据库
@@ -203,8 +206,6 @@ export class OptionTradingService {
   private async executeOptionTrade(params: OptionTradingParams, payload: WebhookSignalPayload): Promise<OptionTradingResult> {
     console.log('🚀 Executing option trade:', params);
     
-    const useMockMode = process.env.USE_MOCK_MODE === 'true';
-    
     try {
       let instrumentName: string | undefined;
       
@@ -239,13 +240,9 @@ export class OptionTradingService {
 
         console.log(`🎯 Option selection: delta1=${delta1} → ${isCall ? 'call' : 'put'} option, action=${params.action} → ${actualDirection}`);
 
-        // 调用getInstrumentByDelta
-        let deltaResult;
-        if (useMockMode) {
-          deltaResult = await this.mockClient.getInstrumentByDelta(currency, payload.n, payload.delta1, isCall, underlying);
-        } else {
-          deltaResult = await this.deribitClient.getInstrumentByDelta(currency, payload.n, payload.delta1, isCall, underlying);
-        }
+        // 调用getInstrumentByDelta - 使用统一客户端
+        const client = getUnifiedClient();
+        const deltaResult = await client.getInstrumentByDelta(currency, payload.n, payload.delta1, isCall, underlying);
         
         if (deltaResult) {
           instrumentName = deltaResult.instrument.instrument_name;
@@ -253,7 +250,7 @@ export class OptionTradingService {
           
           // 执行开仓交易，使用实际交易方向
           const modifiedParams = { ...params, direction: actualDirection };
-          const orderResult = await this.placeOptionOrder(instrumentName, modifiedParams, useMockMode);
+          const orderResult = await this.placeOptionOrder(instrumentName!, modifiedParams, isMockMode());
           if (!orderResult.success) {
             return orderResult;
           }
@@ -324,6 +321,13 @@ export class OptionTradingService {
           // 确定平仓比例，默认全平
           const closeRatio = params.closeRatio || 1.0;
 
+          // 查询相关的合约名称用于通知
+          const deltaRecords = this.deltaManager.getRecords({
+            account_id: params.accountName,
+            tv_id: params.tv_id
+          });
+          const instrumentNames = deltaRecords.map(record => record.instrument_name);
+
           // 发送盈利平仓开始通知到企业微信
           await this.sendProfitCloseNotification(
             params.accountName,
@@ -333,7 +337,8 @@ export class OptionTradingService {
               symbol: params.symbol,
               action: params.action,
               direction: params.direction,
-              closeRatio: closeRatio
+              closeRatio: closeRatio,
+              instrumentNames: instrumentNames
             }
           );
 
@@ -342,7 +347,7 @@ export class OptionTradingService {
             params.accountName,
             params.tv_id,
             closeRatio,
-            false,
+            false, // 使用限价单+渐进式策略
             {
               configLoader: this.configLoader,
               deltaManager: this.deltaManager,
@@ -361,7 +366,8 @@ export class OptionTradingService {
               action: params.action,
               direction: params.direction,
               closeRatio: closeRatio,
-              result: closeResult
+              result: closeResult,
+              instrumentNames: closeResult.closedInstruments
             }
           );
 
@@ -391,12 +397,18 @@ export class OptionTradingService {
             }
           );
 
-          // 执行止损逻辑：平仓50%
-          const stopResult = await this.executeStopLossLogic(
+          // 执行止损逻辑：使用executePositionCloseByTvId进行限价单平仓50%
+          const stopResult = await executePositionCloseByTvId(
             params.accountName,
             params.tv_id,
             0.5, // 平仓50%
-            useMockMode
+            false, // 使用限价单+渐进式策略进行止损
+            {
+              configLoader: this.configLoader,
+              deltaManager: this.deltaManager,
+              deribitAuth: this.deribitAuth,
+              deribitClient: this.deribitClient
+            }
           );
 
           // 发送止损结果通知到企业微信
@@ -425,7 +437,7 @@ export class OptionTradingService {
       // 返回交易结果
       return {
         success: true,
-        orderId: `${useMockMode ? 'mock' : 'real'}_order_${Date.now()}`,
+        orderId: `${isMockMode() ? 'mock' : 'real'}_order_${Date.now()}`,
         message: `Successfully executed ${params.action} ${params.direction} order for ${params.quantity} contracts`,
         instrumentName,
         executedQuantity: params.quantity,
@@ -673,6 +685,7 @@ ${directionEmoji} **操作**: ${actionText[details.action] || details.action}
       direction: 'buy' | 'sell';
       closeRatio: number;
       result?: any;
+      instrumentNames?: string[];
     }
   ): Promise<void> {
     try {
@@ -711,6 +724,11 @@ ${directionEmoji} **操作**: ${actionText[details.action] || details.action}
 👤 **账户**: ${accountName}
 ⏰ **时间**: ${new Date().toLocaleString('zh-CN')}`;
 
+      // 添加合约名称信息
+      if (details.instrumentNames && details.instrumentNames.length > 0) {
+        content += `\n🎯 **合约名称**: ${details.instrumentNames.join(', ')}`;
+      }
+
       if (status === 'START') {
         content += `\n📋 **状态**: 开始执行盈利平仓操作`;
       } else if (status === 'SUCCESS') {
@@ -742,237 +760,9 @@ ${directionEmoji} **操作**: ${actionText[details.action] || details.action}
     }
   }
 
-  /**
-   * 执行止损逻辑
-   * @param accountName 账户名称
-   * @param tvId TV信号ID
-   * @param stopRatio 止损比例 (0.5 = 50%)
-   * @param useMockMode 是否使用模拟模式
-   */
-  private async executeStopLossLogic(
-    accountName: string,
-    tvId: number,
-    stopRatio: number,
-    useMockMode: boolean
-  ): Promise<any> {
-    try {
-      console.log(`🛑 [Stop Loss] Starting stop loss execution for tv_id=${tvId}, ratio=${stopRatio}`);
 
-      // 1. 查询数据库中对应tv_id的所有仓位记录
-      const deltaRecords = this.deltaManager.getRecords({
-        account_id: accountName,
-        tv_id: tvId
-      });
 
-      if (deltaRecords.length === 0) {
-        console.log(`⚠️ No delta records found for tv_id: ${tvId}`);
-        return {
-          success: false,
-          message: `No delta records found for tv_id: ${tvId}`
-        };
-      }
 
-      console.log(`📊 Found ${deltaRecords.length} delta record(s) for tv_id: ${tvId}`);
-
-      // 2. 获取访问令牌
-      if (!useMockMode) {
-        await this.deribitAuth.authenticate(accountName);
-      }
-      const tokenInfo = this.deribitAuth.getTokenInfo(accountName);
-      if (!tokenInfo && !useMockMode) {
-        return {
-          success: false,
-          message: `Failed to get access token for account: ${accountName}`
-        };
-      }
-
-      // 3. 获取当前仓位信息
-      const positions = useMockMode
-        ? [] // 模拟模式下暂时返回空数组，实际应该从模拟数据中获取
-        : await this.deribitClient.getPositions(tokenInfo!.accessToken, { kind: 'option' });
-
-      // 4. 对每个Delta记录执行止损操作
-      const stopResults = [];
-      for (const deltaRecord of deltaRecords) {
-        const currentPosition = positions.find(pos =>
-          pos.instrument_name === deltaRecord.instrument_name && pos.size !== 0
-        );
-
-        if (currentPosition) {
-          console.log(`🛑 Executing stop loss for instrument: ${deltaRecord.instrument_name}`);
-
-          const stopResult = await this.executePositionStopLoss(
-            currentPosition,
-            stopRatio,
-            useMockMode,
-            accountName
-          );
-
-          stopResults.push(stopResult);
-        } else {
-          console.log(`⚠️ No active position found for instrument: ${deltaRecord.instrument_name}`);
-          stopResults.push({
-            success: false,
-            message: `No active position found for instrument: ${deltaRecord.instrument_name}`
-          });
-        }
-      }
-
-      // 5. 汇总结果
-      const successCount = stopResults.filter(r => r.success).length;
-      const totalCount = stopResults.length;
-
-      return {
-        success: successCount > 0,
-        message: `Stop loss completed: ${successCount}/${totalCount} successful`,
-        orderId: `stop_loss_${tvId}`,
-        executedQuantity: successCount,
-        stopRatio: stopRatio,
-        results: stopResults
-      };
-
-    } catch (error) {
-      console.error(`❌ Stop loss failed for tv_id ${tvId}:`, error);
-      return {
-        success: false,
-        message: `Stop loss failed: ${error instanceof Error ? error.message : 'Unknown error'}`
-      };
-    }
-  }
-
-  /**
-   * 执行单个仓位的止损操作
-   * @param position 当前仓位
-   * @param stopRatio 止损比例
-   * @param useMockMode 是否使用模拟模式
-   * @param accountName 账户名称
-   */
-  private async executePositionStopLoss(
-    position: any,
-    stopRatio: number,
-    useMockMode: boolean,
-    accountName: string
-  ): Promise<any> {
-    try {
-      console.log(`🛑 [Stop Loss] Processing position: ${position.instrument_name}, size: ${position.size}`);
-
-      // 1. 计算止损数量
-      const totalSize = Math.abs(position.size);
-      const stopQuantity = totalSize * stopRatio;
-      const stopDirection = position.direction === 'buy' ? 'sell' : 'buy';
-
-      console.log(`🛑 [Stop Loss] Stop quantity: ${stopQuantity} (${(stopRatio * 100).toFixed(1)}% of ${totalSize})`);
-
-      // 2. 获取期权价格信息
-      const optionDetails = useMockMode
-        ? await this.mockClient.getOptionDetails(position.instrument_name)
-        : await this.deribitClient.getOptionDetails(position.instrument_name);
-
-      if (!optionDetails) {
-        throw new Error(`Failed to get option details for ${position.instrument_name}`);
-      }
-
-      // 3. 计算初始价格：(bid_price + ask_price) / 2
-      const initialPrice = (optionDetails.best_bid_price + optionDetails.best_ask_price) / 2;
-      console.log(`🛑 [Stop Loss] Initial price: ${initialPrice} (bid: ${optionDetails.best_bid_price}, ask: ${optionDetails.best_ask_price})`);
-
-      // 4. 获取工具详情用于价格修正
-      const instrumentInfo = useMockMode
-        ? await this.mockClient.getInstrument(position.instrument_name)
-        : await this.deribitClient.getInstrument(position.instrument_name);
-
-      if (!instrumentInfo) {
-        throw new Error(`Failed to get instrument details for ${position.instrument_name}`);
-      }
-
-      // 5. 修正价格和数量
-      const { correctOrderAmount, correctOrderPrice } = await import('../utils/price-correction');
-      const amountResult = correctOrderAmount(stopQuantity, instrumentInfo);
-      const priceResult = correctOrderPrice(initialPrice, instrumentInfo);
-
-      const finalQuantity = amountResult.correctedAmount;
-      const finalPrice = priceResult.correctedPrice;
-
-      console.log(`🛑 [Stop Loss] Corrected params: quantity ${stopQuantity} → ${finalQuantity}, price ${initialPrice} → ${finalPrice}`);
-
-      // 6. 获取访问令牌并下单
-      let accessToken: string | undefined;
-      if (!useMockMode) {
-        const tokenInfo = this.deribitAuth.getTokenInfo(accountName);
-        if (!tokenInfo) {
-          throw new Error(`Failed to get access token for account: ${accountName}`);
-        }
-        accessToken = tokenInfo.accessToken;
-      }
-
-      const orderResult = useMockMode
-        ? await this.mockClient.placeOrder({
-            instrument_name: position.instrument_name,
-            amount: finalQuantity,
-            type: 'limit',
-            direction: stopDirection,
-            price: finalPrice
-          })
-        : await this.deribitClient.placeOrder(
-            position.instrument_name,
-            stopDirection,
-            finalQuantity,
-            'limit',
-            finalPrice,
-            accessToken!
-          );
-
-      if (!orderResult) {
-        throw new Error('Failed to place stop loss order');
-      }
-
-      console.log(`🛑 [Stop Loss] Order placed: ${orderResult.order?.order_id || 'mock_order'}`);
-
-      // 7. 使用渐进式限价策略
-      if (!useMockMode && orderResult.order?.order_id) {
-        console.log(`🎯 [Stop Loss] Starting progressive limit strategy for order ${orderResult.order.order_id}`);
-
-        const { executeProgressiveLimitStrategy } = await import('./progressive-limit-strategy');
-        const strategyResult = await executeProgressiveLimitStrategy(
-          {
-            orderId: orderResult.order.order_id,
-            instrumentName: position.instrument_name,
-            direction: stopDirection,
-            quantity: finalQuantity,
-            initialPrice: finalPrice,
-            accountName: accountName,
-            instrumentDetail: instrumentInfo,
-            timeout: 8000,
-            maxStep: 3
-          },
-          {
-            deribitAuth: this.deribitAuth,
-            deribitClient: this.deribitClient
-          }
-        );
-
-        console.log(`🏁 [Stop Loss] Progressive strategy completed: ${strategyResult.success ? 'success' : 'failed'}`);
-      }
-
-      return {
-        success: true,
-        orderId: orderResult.order?.order_id || 'mock_order',
-        message: `Stop loss executed successfully for ${position.instrument_name}`,
-        instrumentName: position.instrument_name,
-        executedQuantity: finalQuantity,
-        executedPrice: finalPrice,
-        stopRatio: stopRatio
-      };
-
-    } catch (error) {
-      console.error(`❌ Stop loss failed for position ${position.instrument_name}:`, error);
-      return {
-        success: false,
-        message: `Stop loss failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        instrumentName: position.instrument_name
-      };
-    }
-  }
 
   /**
    * 发送止损通知到企业微信

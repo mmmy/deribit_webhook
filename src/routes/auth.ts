@@ -1,69 +1,52 @@
 import { Router } from 'express';
 import { ConfigLoader, DeribitAuth, MockDeribitClient } from '../services';
+import { validateAccountFromQuery } from '../middleware/account-validation';
+import { getUnifiedClient } from '../factory/client-factory';
+import { getAuthenticationService } from '../services/authentication-service';
+import { ApiResponse } from '../utils/response-formatter';
 
 const router = Router();
 
 // Authentication test endpoint
-router.get('/api/auth/test', async (req, res) => {
+router.get('/api/auth/test', validateAccountFromQuery('account'), async (req, res) => {
   try {
     const accountName = req.query.account as string || 'account_1';
-    const configLoader = ConfigLoader.getInstance();
-    const account = configLoader.getAccountByName(accountName);
+    
+    // Account validation is now handled by middleware
+    // req.validatedAccount contains the validated account
 
-    if (!account) {
-      return res.status(404).json({
-        success: false,
-        message: `Account not found: ${accountName}`,
-        timestamp: new Date().toISOString()
-      });
-    }
+    // 使用统一客户端，自动处理Mock/Real模式
+    const client = getUnifiedClient();
 
-    const useMockMode = process.env.USE_MOCK_MODE === 'true';
-
-    if (useMockMode) {
-      // Use mock client
-      const mockClient = new MockDeribitClient();
-      const authResult = await mockClient.authenticate(account);
+    if (client.isMock) {
+      // Use unified mock client
+      const authResult = await (client as any).mockClient.authenticate(req.validatedAccount!);
       
-      res.json({
-        success: true,
-        message: 'Authentication successful (MOCK MODE)',
+      return ApiResponse.ok(res, {
         account: accountName,
         mockMode: true,
         tokenType: authResult.result.token_type,
-        expiresIn: authResult.result.expires_in,
-        timestamp: new Date().toISOString()
-      });
+        expiresIn: authResult.result.expires_in
+      }, { message: 'Authentication successful (MOCK MODE)' });
     } else {
-      // Use real client
-      const deribitAuth = new DeribitAuth();
-      const success = await deribitAuth.testConnection(accountName);
+      // Use real client with unified authentication service
+      const authResult = await getAuthenticationService().authenticate(accountName);
 
-      if (success) {
-        const tokenInfo = deribitAuth.getTokenInfo(accountName);
-        res.json({
-          success: true,
-          message: 'Authentication successful',
+      if (authResult.success && authResult.token) {
+        return ApiResponse.ok(res, {
           account: accountName,
           mockMode: false,
-          tokenExpiry: tokenInfo ? new Date(tokenInfo.expiresAt).toISOString() : null,
-          timestamp: new Date().toISOString()
-        });
+          tokenExpiry: new Date(authResult.token.expiresAt).toISOString()
+        }, { message: 'Authentication successful' });
       } else {
-        res.status(401).json({
-          success: false,
-          message: 'Authentication failed',
-          account: accountName,
-          timestamp: new Date().toISOString()
+        return ApiResponse.unauthorized(res, authResult.error || 'Authentication failed', {
+          meta: { accountName }
         });
       }
     }
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Authentication error',
-      error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString()
+    return ApiResponse.internalError(res, error as Error, {
+      message: 'Authentication error'
     });
   }
 });

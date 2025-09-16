@@ -9,8 +9,9 @@ export class WeChatNotificationService {
   private bots: Map<string, WeChatBot> = new Map();
   private configLoader: ConfigLoader;
 
-  constructor() {
-    this.configLoader = ConfigLoader.getInstance();
+  constructor(configLoader?: ConfigLoader) {
+    // 支持依赖注入，但保持向后兼容
+    this.configLoader = configLoader || ConfigLoader.getInstance();
     this.initializeBots();
   }
 
@@ -327,6 +328,109 @@ ${profitEmoji} **总盈亏**: ${data.totalProfit.toFixed(2)}
     });
 
     await Promise.allSettled(promises);
+  }
+
+  /**
+   * 发送未成交订单处理结果通知
+   * @param accountName 账户名称
+   * @param results 处理结果数组
+   * @param requestId 请求ID
+   * @param overallSuccess 整体处理是否成功
+   * @param errorMessage 错误信息（如果有）
+   */
+  async sendPendingOrdersNotification(
+    accountName: string,
+    results: any[],
+    requestId: string,
+    overallSuccess: boolean = true,
+    errorMessage?: string
+  ): Promise<void> {
+    const bot = this.getBot(accountName);
+    if (!bot) {
+      console.warn(`WeChat Bot not available for account ${accountName} - skipping pending orders notification`);
+      return;
+    }
+
+    try {
+      let content: string;
+
+      // 检查是否是整体处理失败
+      if (!overallSuccess) {
+        content = `❌ **未成交订单处理失败**
+
+👤 **账户**: ${accountName}
+💬 **失败原因**: ${errorMessage || '未知错误'}
+🔄 **请求ID**: ${requestId}
+⏰ **失败时间**: ${new Date().toLocaleString('zh-CN')}
+
+⚠️ **请检查系统状态和网络连接**`;
+      } else {
+        // 整体处理成功，检查具体订单处理结果
+        const processedCount = results.length;
+        const successCount = results.filter(r => r.result?.success).length;
+
+        if (processedCount === 0) {
+          // 没有找到需要处理的订单
+          content = `ℹ️ **未成交订单检查完成**
+
+👤 **账户**: ${accountName}
+📊 **检查结果**: 未发现需要处理的限价订单
+🔄 **请求ID**: ${requestId}
+⏰ **检查时间**: ${new Date().toLocaleString('zh-CN')}
+
+✅ **当前无需要优化的订单**`;
+        } else if (successCount > 0) {
+          // 有成功处理的订单
+          content = `🎯 **未成交订单自动处理完成**
+
+👤 **账户**: ${accountName}
+📊 **处理结果**: ${successCount}/${processedCount} 订单成功执行渐进式策略
+🔄 **请求ID**: ${requestId}
+⏰ **处理时间**: ${new Date().toLocaleString('zh-CN')}
+
+**成功处理的订单**:`;
+
+          // 添加成功处理的订单详情
+          const successResults = results.filter(r => r.result?.success);
+          for (const result of successResults) {
+            content += `\n📈 ${result.instrument_name} (${result.order_id})`;
+          }
+
+          // 如果有失败的订单，也显示
+          const failedResults = results.filter(r => !r.result?.success);
+          if (failedResults.length > 0) {
+            content += `\n\n**未能处理的订单**:`;
+            for (const result of failedResults) {
+              content += `\n⚠️ ${result.instrument_name} (${result.order_id})`;
+            }
+          }
+
+          content += `\n\n✅ **成功订单已自动优化成交，仓位已更新**`;
+        } else {
+          // 没有成功处理的订单
+          content = `⚠️ **未成交订单处理未成功**
+
+👤 **账户**: ${accountName}
+📊 **处理结果**: 0/${processedCount} 订单成功执行
+🔄 **请求ID**: ${requestId}
+⏰ **处理时间**: ${new Date().toLocaleString('zh-CN')}
+
+**未能处理的订单**:`;
+
+          for (const result of results) {
+            content += `\n⚠️ ${result.instrument_name} (${result.order_id})`;
+          }
+
+          content += `\n\n❌ **可能原因：价差过大或市场条件不适合**`;
+        }
+      }
+
+      await bot.sendText(content);
+      console.log(`✅ Pending orders notification sent for account: ${accountName}`);
+
+    } catch (error) {
+      console.error(`❌ Failed to send pending orders notification for account ${accountName}:`, error);
+    }
   }
 }
 

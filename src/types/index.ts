@@ -135,6 +135,32 @@ export interface PlaceOptionOrderParams {
   delta2?: number;                       // 目标Delta值 (可选，用于记录到delta数据库)
 }
 
+// Deribit 订单接口
+export interface DeribitOrder {
+  order_id: string;                      // 订单ID
+  instrument_name: string;               // 合约名称
+  direction: 'buy' | 'sell';             // 订单方向
+  amount: number;                        // 订单数量
+  price: number;                         // 订单价格
+  order_type: 'limit' | 'market' | 'stop_limit' | 'stop_market'; // 订单类型
+  order_state: 'open' | 'filled' | 'rejected' | 'cancelled' | 'untriggered'; // 订单状态
+  filled_amount?: number;                // 已成交数量
+  average_price?: number;                // 平均成交价格
+  creation_timestamp: number;            // 创建时间戳
+  last_update_timestamp: number;         // 最后更新时间戳
+  label?: string;                        // 订单标签
+  time_in_force?: 'good_til_cancelled' | 'fill_or_kill' | 'immediate_or_cancel'; // 订单有效期
+  post_only?: boolean;                   // 是否只做maker
+  reduce_only?: boolean;                 // 是否只减仓
+  trigger_price?: number;                // 触发价格（止损单）
+  commission?: number;                   // 手续费
+  profit_loss?: number;                  // 盈亏
+  implv?: number;                        // 隐含波动率
+  usd?: number;                          // USD价值
+  api?: boolean;                         // 是否通过API创建
+  mmp?: boolean;                         // 是否为做市商保护
+}
+
 // 期权交易结果接口
 export interface OptionTradingResult {
   success: boolean;
@@ -147,6 +173,23 @@ export interface OptionTradingResult {
   finalOrderState?: string;              // 最终订单状态
   positionInfo?: DetailedPositionInfo;   // 详细仓位信息
   error?: string;
+}
+
+// 仓位调整结果接口
+export interface PositionAdjustmentResult {
+  success: boolean;
+  message?: string;
+  reason?: string;
+  error?: string;
+  oldInstrument?: string;
+  newInstrument?: string;
+  adjustmentSummary?: {
+    oldSize: number;
+    oldDelta: number;
+    newDirection: 'buy' | 'sell';
+    newQuantity: number;
+    targetDelta: number;
+  };
 }
 
 // Deribit仓位信息接口

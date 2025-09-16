@@ -1,15 +1,15 @@
 import { Router } from 'express';
-import { 
-  ConfigLoader, 
-  OptionTradingService, 
-  WebhookResponse, 
-  WebhookSignalPayload 
+import { getOptionTradingService } from '../core';
+import { validateAccountFromBody } from '../middleware/account-validation';
+import {
+  WebhookSignalPayload
 } from '../services';
+import { ApiResponse } from '../utils/response-formatter';
 
 const router = Router();
 
 // TradingView Webhook Signal
-router.post('/webhook/signal', async (req, res) => {
+router.post('/webhook/signal', validateAccountFromBody('accountName'), async (req, res) => {
   const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
   try {
@@ -17,12 +17,7 @@ router.post('/webhook/signal', async (req, res) => {
 
     // 1. Validate request body
     if (!req.body || typeof req.body !== 'object') {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid request body',
-        timestamp: new Date().toISOString(),
-        requestId
-      } as WebhookResponse);
+      return ApiResponse.badRequest(res, 'Invalid request body', { meta: { requestId } });
     }
 
     const payload = req.body as WebhookSignalPayload;
@@ -32,66 +27,42 @@ router.post('/webhook/signal', async (req, res) => {
     const missingFields = requiredFields.filter(field => !payload[field as keyof WebhookSignalPayload]);
 
     if (missingFields.length > 0) {
-      return res.status(400).json({
-        success: false,
-        message: `Missing required fields: ${missingFields.join(', ')}`,
-        timestamp: new Date().toISOString(),
-        requestId
-      } as WebhookResponse);
+      return ApiResponse.badRequest(res, `Missing required fields: ${missingFields.join(', ')}`, { meta: { requestId } });
     }
 
-    // 3. Validate account
-    const configLoader = ConfigLoader.getInstance();
-    const account = configLoader.getAccountByName(payload.accountName);
-    if (!account) {
-      return res.status(404).json({
-        success: false,
-        message: `Account not found: ${payload.accountName}`,
-        timestamp: new Date().toISOString(),
-        requestId
-      } as WebhookResponse);
-    }
-
+    // 3. Account validation is now handled by middleware
+    // req.validatedAccount contains the validated account
+    
     // 4. Process trading signal
     console.log(`🔄 [${requestId}] Processing signal for account: ${payload.accountName}`);
-    const optionTradingService = new OptionTradingService();
+    const optionTradingService = getOptionTradingService();
     const result = await optionTradingService.processWebhookSignal(payload);
 
-    // 5. Return result
-    const response: WebhookResponse = {
-      success: result.success,
-      message: result.message,
-      data: {
-        orderId: result.orderId,
-        instrumentName: result.instrumentName,
-        executedQuantity: result.executedQuantity,
-        executedPrice: result.executedPrice
-      },
-      timestamp: new Date().toISOString(),
-      requestId
-    };
-
     if (!result.success) {
-      response.error = result.error;
-      console.error(`❌ [${requestId}] Trading failed:`, result.error);
-      return res.status(500).json(response);
+      console.error(`❌ [${requestId}] Trading failed:`, result.error || result.message);
+      return ApiResponse.internalError(res, result.error || 'Trading operation failed', {
+        meta: {
+          requestId,
+          orderId: result.orderId,
+          instrumentName: result.instrumentName,
+          executedQuantity: result.executedQuantity,
+          executedPrice: result.executedPrice
+        }
+      });
     }
 
     console.log(`✅ [${requestId}] Trading successful:`, result);
-    res.json(response);
+    return ApiResponse.ok(res, {
+      orderId: result.orderId,
+      instrumentName: result.instrumentName,
+      executedQuantity: result.executedQuantity,
+      executedPrice: result.executedPrice
+    }, { message: result.message, meta: { requestId } });
 
   } catch (error) {
     console.error(`💥 [${requestId}] Webhook processing error:`, error);
 
-    const errorResponse: WebhookResponse = {
-      success: false,
-      message: 'Internal server error processing webhook',
-      error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString(),
-      requestId
-    };
-
-    res.status(500).json(errorResponse);
+    return ApiResponse.internalError(res, error instanceof Error ? error.message : 'Unknown error', { meta: { requestId } });
   }
 });
 

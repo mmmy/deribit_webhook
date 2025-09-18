@@ -246,8 +246,9 @@ export class DeribitClient {
         distance: Math.abs(expiryTimestamp - minExpiryTime.getTime())
       })).sort((a, b) => a.distance - b.distance);
 
-      // 选择距离最小的两个到期日
-      const nearestTwoExpiries = expiryDistances.slice(0, 2).map(item => item.expiryTimestamp);
+      // 选择距离最小的N个到期日
+      const N = 1
+      const nearestTwoExpiries = expiryDistances.slice(0, N).map(item => item.expiryTimestamp);
 
       console.log(`📅 Found ${nearestTwoExpiries.length} nearest expiry dates to minimum expiry time`);
       console.log(`📅 Minimum expiry time: ${minExpiryTime.toLocaleDateString()}`);
@@ -322,9 +323,10 @@ export class DeribitClient {
           console.log(`  ${index + 1}. ${option.instrument.instrument_name}: Delta: ${option.details.greeks.delta.toFixed(4)}, Best Bid: ${option.details.best_bid_price}, Best Ask: ${option.details.best_ask_price}`);
         });
 
-        // 排序并选择前2个
+        // 排序并选择前M个
+        const M = 3
         optionsWithDelta.sort((a, b) => a.deltaDistance - b.deltaDistance);
-        const top2ForExpiry = optionsWithDelta.slice(0, 2);
+        const top2ForExpiry = optionsWithDelta.slice(0, M);
 
         console.log(
           `🎯 Selected ${top2ForExpiry.length} options for expiry ${new Date(
@@ -353,19 +355,18 @@ export class DeribitClient {
         return null;
       }
 
-      // 5. 从所有候选期权中选择最优的一个
-      // 首先按Delta距离排序，然后按价差比率排序
-      const bestOption = candidateOptions.reduce((best, current) =>
-        current.deltaDistance < best.deltaDistance ||
-        (current.deltaDistance === best.deltaDistance &&
-          current.spreadRatio < best.spreadRatio)
-          ? current
-          : best.spreadRatio < current.spreadRatio
-          ? best
-          : current.spreadRatio < best.spreadRatio
-          ? current
-          : best
-      );
+      // 5. 从所有候选期权中选择最优的一个, 盘口价差最小的
+      const bestOption = candidateOptions.reduce((best, current) => {
+        if (current.spreadRatio < best.spreadRatio) {
+          return current;
+        }
+
+        if (current.spreadRatio === best.spreadRatio && current.deltaDistance < best.deltaDistance) {
+          return current;
+        }
+
+        return best;
+      });
 
       console.log(
         `✅ Selected option: ${bestOption.instrument.instrument_name}`

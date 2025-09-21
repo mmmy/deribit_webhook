@@ -5,10 +5,9 @@
  * 提供统一的认证流程管理，消除认证代码重复
  */
 
-import { DeribitAuth } from './auth';
 import { accountValidationService } from '../middleware/account-validation';
-import { isMockMode } from '../factory/client-factory';
-import type { AuthToken, ApiKeyConfig } from '../types';
+import type { ApiKeyConfig, AuthToken } from '../types';
+import { DeribitAuth } from './auth';
 
 /**
  * 认证错误类
@@ -46,7 +45,6 @@ export interface AuthenticationResult {
   success: boolean;
   token?: AuthToken;
   account?: ApiKeyConfig;
-  isMock: boolean;
   error?: string;
   errorCode?: string;
 }
@@ -86,18 +84,7 @@ export class AuthenticationService {
         account = accountValidationService.validateAccount(accountName);
       }
 
-      // 2. Mock模式检查
-      if (isMockMode()) {
-        console.log(`✅ Mock mode - skipping real authentication for account: ${accountName}`);
-        return {
-          success: true,
-          account,
-          isMock: true,
-          token: this.createMockToken(accountName)
-        };
-      }
-
-      // 3. 真实模式认证
+      // 2. 真实模式认证
       console.log(`🔐 Authenticating account: ${accountName}`);
       const token = await this.deribitAuth.authenticate(accountName);
       
@@ -105,8 +92,7 @@ export class AuthenticationService {
       return {
         success: true,
         token,
-        account,
-        isMock: false
+        account
       };
 
     } catch (error) {
@@ -125,7 +111,6 @@ export class AuthenticationService {
       return {
         success: false,
         account: skipValidation ? undefined : accountValidationService.checkAccount(accountName).account,
-        isMock: isMockMode(),
         error: authError.message,
         errorCode: authError.errorCode
       };
@@ -138,9 +123,6 @@ export class AuthenticationService {
    * @returns Token信息或null
    */
   public getTokenInfo(accountName: string): AuthToken | null {
-    if (isMockMode()) {
-      return this.createMockToken(accountName);
-    }
     return this.deribitAuth.getTokenInfo(accountName);
   }
 
@@ -151,10 +133,6 @@ export class AuthenticationService {
    * @returns 有效的Token信息
    */
   public async ensureAuthenticated(accountName: string, forceRefresh: boolean = false): Promise<AuthToken> {
-    if (isMockMode()) {
-      return this.createMockToken(accountName);
-    }
-
     // 检查现有Token
     let tokenInfo = this.deribitAuth.getTokenInfo(accountName);
     
@@ -197,11 +175,6 @@ export class AuthenticationService {
    * @returns 连接测试结果
    */
   public async testConnection(accountName?: string): Promise<boolean> {
-    if (isMockMode()) {
-      console.log('✅ Mock mode - connection test always succeeds');
-      return true;
-    }
-
     try {
       return await this.deribitAuth.testConnection(accountName);
     } catch (error) {
@@ -227,7 +200,6 @@ export class AuthenticationService {
         return {
           success: false,
           account: accountValidationService.checkAccount(accountNames[index]).account,
-          isMock: isMockMode(),
           error: result.reason instanceof Error ? result.reason.message : 'Unknown error',
           errorCode: 'BATCH_AUTH_FAILED'
         };
@@ -240,36 +212,20 @@ export class AuthenticationService {
    * @param accountName 账户名称
    */
   public clearToken(accountName: string): void {
-    if (!isMockMode()) {
-      // 清除DeribitAuth中的缓存Token
-      this.deribitAuth.clearToken(accountName);
-    }
+    // 清除DeribitAuth中的缓存Token
+    this.deribitAuth.clearToken(accountName);
   }
 
   /**
    * 获取认证服务状态信息
    */
   public getStatus(): {
-    isMock: boolean;
     cachedTokens: number;
     service: string;
   } {
     return {
-      isMock: isMockMode(),
-      cachedTokens: isMockMode() ? 0 : Object.keys(this.deribitAuth).length, // Simple approximation
+      cachedTokens: Object.keys(this.deribitAuth).length, // Simple approximation
       service: 'Unified Authentication Service'
-    };
-  }
-
-  /**
-   * 创建Mock Token（用于测试）
-   */
-  private createMockToken(accountName: string): AuthToken {
-    return {
-      accessToken: `mock_token_${accountName}_${Date.now()}`,
-      refreshToken: `mock_refresh_${accountName}_${Date.now()}`,
-      expiresAt: Date.now() + 24 * 60 * 60 * 1000, // 24小时后过期
-      scope: 'mockScope'
     };
   }
 

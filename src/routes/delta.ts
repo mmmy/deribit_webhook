@@ -58,10 +58,8 @@ router.get('/api/delta/:accountId', validateAccountFromParams('accountId'), asyn
 router.get('/api/delta/:accountId/live-data', validateAccountFromParams('accountId'), async (req, res) => {
   try {
     const { accountId } = req.params;
-    const configLoader = ConfigLoader.getInstance();
-    const useMockMode = process.env.USE_MOCK_MODE === 'true';
 
-    console.log(`🎯 Live data request: accountId=${accountId}, mockMode=${useMockMode} (all currencies)`);
+    console.log(`🎯 Live data request: accountId=${accountId} (all currencies)`);
 
     // Account validation is now handled by middleware
     // req.validatedAccount contains the validated account
@@ -69,140 +67,41 @@ router.get('/api/delta/:accountId/live-data', validateAccountFromParams('account
     let positions = [];
     let openOrders = [];
 
-    if (useMockMode) {
-      console.log(`🎭 Using mock mode for ${accountId} (all currencies)`);
-      // Mock mode: return simulated data for all currencies
-      positions = [
-        {
-          instrument_name: 'BTC-8AUG25-113000-C',
-          size: 10.5,
-          direction: 'buy',
-          average_price: 0.025,
-          mark_price: 0.028,
-          unrealized_pnl: 0.315,
-          delta: 0.65
-        },
-        {
-          instrument_name: 'ETH-8AUG25-3500-P',
-          size: -5.0,
-          direction: 'sell',
-          average_price: 0.018,
-          mark_price: 0.015,
-          unrealized_pnl: 0.15,
-          delta: -0.42
-        },
-        {
-          instrument_name: 'SOL-8AUG25-200-C',
-          size: 20.0,
-          direction: 'buy',
-          average_price: 0.012,
-          mark_price: 0.014,
-          unrealized_pnl: 0.04,
-          delta: 0.38
-        }
-      ];
+    try {
+      console.log(`🔐 Authenticating account: ${accountId}`);
+      // Use authentication service
+      const authResult = await getAuthenticationService().authenticate(accountId);
 
-      openOrders = [
-        {
-          order_id: 'mock_order_123',
-          instrument_name: 'BTC-15AUG25-90000-P',
-          direction: 'sell',
-          amount: 5.0,
-          price: 0.015,
-          order_type: 'limit',
-          delta: -0.35
-        },
-        {
-          order_id: 'mock_order_456',
-          instrument_name: 'ETH-15AUG25-4000-C',
-          direction: 'buy',
-          amount: 8.0,
-          price: 0.022,
-          order_type: 'limit',
-          delta: 0.58
-        }
-      ];
-    } else {
-      // Real mode: call Deribit API
-      console.log(`🔗 Using real Deribit API for ${accountId}`);
-      try {
-        console.log(`🔐 Authenticating account: ${accountId}`);
-        // 使用统一认证服务
-        const authResult = await getAuthenticationService().authenticate(accountId);
-        
-        if (!authResult.success || !authResult.token) {
-          throw new Error(authResult.error || 'Authentication failed - no token info');
-        }
-
-        console.log(`✅ Authentication successful for ${accountId}`);
-
-        const isTestEnv = process.env.USE_TEST_ENVIRONMENT === 'true';
-        const apiConfig = getConfigByEnvironment(isTestEnv);
-        const authInfo = createAuthInfo(authResult.token.accessToken);
-
-        console.log(`🌐 Using ${isTestEnv ? 'TEST' : 'PRODUCTION'} environment: ${apiConfig.baseUrl}`);
-
-        const privateAPI = new DeribitPrivateAPI(apiConfig, authInfo);
-
-        console.log(`📊 Fetching positions and orders for all currencies`);
-
-        // Get option positions and orders for all currencies
-        const [allPositions, allOrders] = await Promise.all([
-          privateAPI.getPositions({ kind: 'option' }),
-          privateAPI.getOpenOrders({ kind: 'option' })
-        ]);
-
-        positions = allPositions || [];
-        openOrders = allOrders || [];
-
-        console.log(`✅ Total retrieved: ${positions.length} positions and ${openOrders.length} open orders across all currencies`);
-
-      } catch (error) {
-        console.error('Failed to get live data from Deribit, falling back to mock data:', error);
-
-        // Fallback to mock data
-        positions = [
-          {
-            instrument_name: 'BTC-8AUG25-113000-C',
-            size: 10.5,
-            direction: 'buy',
-            average_price: 0.025,
-            mark_price: 0.028,
-            unrealized_pnl: 0.315,
-            delta: 0.65
-          },
-          {
-            instrument_name: 'ETH-8AUG25-3500-P',
-            size: -5.0,
-            direction: 'sell',
-            average_price: 0.018,
-            mark_price: 0.015,
-            unrealized_pnl: 0.15,
-            delta: -0.42
-          }
-        ];
-
-        openOrders = [
-          {
-            order_id: 'fallback_order_123',
-            instrument_name: 'BTC-15AUG25-90000-P',
-            direction: 'sell',
-            amount: 5.0,
-            price: 0.015,
-            order_type: 'limit',
-            delta: -0.35
-          },
-          {
-            order_id: 'fallback_order_456',
-            instrument_name: 'ETH-15AUG25-4000-C',
-            direction: 'buy',
-            amount: 8.0,
-            price: 0.022,
-            order_type: 'limit',
-            delta: 0.58
-          }
-        ];
+      if (!authResult.success || !authResult.token) {
+        throw new Error(authResult.error || 'Authentication failed - no token info');
       }
+
+      console.log(`✅ Authentication successful for ${accountId}`);
+
+      const isTestEnv = process.env.USE_TEST_ENVIRONMENT === 'true';
+      const apiConfig = getConfigByEnvironment(isTestEnv);
+      const authInfo = createAuthInfo(authResult.token.accessToken);
+
+      console.log(`🌐 Using ${isTestEnv ? 'TEST' : 'PRODUCTION'} environment: ${apiConfig.baseUrl}`);
+
+      const privateAPI = new DeribitPrivateAPI(apiConfig, authInfo);
+
+      console.log(`📊 Fetching positions and orders for all currencies`);
+
+      // Get option positions and orders for all currencies
+      const [allPositions, allOrders] = await Promise.all([
+        privateAPI.getPositions({ kind: 'option' }),
+        privateAPI.getOpenOrders({ kind: 'option' })
+      ]);
+
+      positions = allPositions || [];
+      openOrders = allOrders || [];
+
+      console.log(`✅ Total retrieved: ${positions.length} positions and ${openOrders.length} open orders across all currencies`);
+
+    } catch (error) {
+      console.error('Failed to get live data from Deribit:', error);
+      throw error;
     }
 
     return ApiResponse.ok(res, {
@@ -211,8 +110,7 @@ router.get('/api/delta/:accountId/live-data', validateAccountFromParams('account
     }, {
       meta: {
         accountId,
-        currencies: ['BTC', 'ETH', 'SOL'],
-        mockMode: useMockMode
+        currencies: ['BTC', 'ETH', 'SOL']
       }
     });
   } catch (error) {

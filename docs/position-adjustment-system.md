@@ -214,7 +214,6 @@ for (const pos of activePositions) {
 ## 配置选项
 
 ### 环境变量
-- `USE_MOCK_MODE`: 是否使用Mock模式进行测试
 - `USE_TEST_ENVIRONMENT`: 是否使用测试环境
 
 ### 触发条件

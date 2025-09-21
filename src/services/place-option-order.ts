@@ -9,20 +9,18 @@ import { correctOrderParameters, correctOrderPrice } from '../utils/price-correc
 import { calculateSpreadRatio, calculateSpreadTickMultiple, formatSpreadRatioAsPercentage } from '../utils/spread-calculation';
 import { DeribitAuth } from './auth';
 import { DeribitClient } from './deribit-client';
-import { MockDeribitClient } from './mock-deribit';
 import {
-  handleNonImmediateOrder as handleNonImmediateOrderPure,
-  OrderNotificationInfo,
-  OrderSupportDependencies,
-  recordPositionInfoToDatabase as recordPositionInfoToDatabasePure,
-  sendOrderNotification as sendOrderNotificationPure
+    handleNonImmediateOrder as handleNonImmediateOrderPure,
+    OrderNotificationInfo,
+    OrderSupportDependencies,
+    recordPositionInfoToDatabase as recordPositionInfoToDatabasePure,
+    sendOrderNotification as sendOrderNotificationPure
 } from './order-support-functions';
 
 // 依赖注入接口
 export interface PlaceOrderDependencies {
   deribitAuth: DeribitAuth;
   deribitClient: DeribitClient;
-  mockClient: MockDeribitClient;
   configLoader: ConfigLoader;
   orderSupportDependencies: OrderSupportDependencies;
 }
@@ -31,64 +29,21 @@ export interface PlaceOrderDependencies {
  * 纯函数版本的期权下单
  * @param instrumentName 期权工具名称
  * @param params 交易参数
- * @param useMockMode 是否使用模拟模式
  * @param dependencies 依赖注入
  * @returns 交易结果
  */
 export async function placeOptionOrder(
   instrumentName: string,
   params: OptionTradingParams,
-  useMockMode: boolean,
   dependencies: PlaceOrderDependencies
 ): Promise<OptionTradingResult> {
   console.log(`📋 Placing order for instrument: ${instrumentName}`);
-  
+
   try {
-    if (useMockMode) {
-      return await handleMockOrder(instrumentName, params, dependencies);
-    } else {
-      return await handleRealOrder(instrumentName, params, dependencies);
-    }
+    return await handleRealOrder(instrumentName, params, dependencies);
   } catch (error) {
     return await handleOrderError(instrumentName, params, error, dependencies);
   }
-}
-
-/**
- * 处理模拟订单
- */
-async function handleMockOrder(
-  instrumentName: string,
-  params: OptionTradingParams,
-  dependencies: PlaceOrderDependencies
-): Promise<OptionTradingResult> {
-  console.log(`[MOCK] Placing ${params.direction} order for ${params.quantity} contracts of ${instrumentName}`);
-
-  // 模拟网络延迟
-  await new Promise(resolve => setTimeout(resolve, 200));
-
-  // 模拟订单结果（非立即成交）
-  const mockOrderResult = {
-    order: {
-      order_id: `mock_order_${Date.now()}`,
-      order_state: 'open', // 模拟非立即成交状态
-      filled_amount: 0,
-      average_price: 0
-    }
-  };
-
-  // 检查是否为非立即成交的开仓订单，如果是则记录到delta数据库
-  console.log(`🔍 Checking for delta2 parameter: ${params.delta2}`);
-  await handleNonImmediateOrderPure(mockOrderResult, params, instrumentName, params.quantity, params.price || 0.05, dependencies.orderSupportDependencies);
-
-  return {
-    success: true,
-    orderId: mockOrderResult.order.order_id,
-    message: `Successfully placed ${params.action} ${params.direction} order`,
-    instrumentName,
-    executedQuantity: params.quantity,
-    executedPrice: params.price || 0.05
-  };
 }
 
 /**

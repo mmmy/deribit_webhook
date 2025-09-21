@@ -1,17 +1,15 @@
 import { ConfigLoader } from '../config';
 import { DeltaManager } from '../database/delta-manager';
-import { getUnifiedClient, isMockMode } from '../factory/client-factory';
 import { accountValidationService } from '../middleware/account-validation';
 import {
-  OptionTradingAction,
-  OptionTradingParams,
-  OptionTradingResult,
-  WebhookSignalPayload
+    OptionTradingAction,
+    OptionTradingParams,
+    OptionTradingResult,
+    WebhookSignalPayload
 } from '../types';
 import { DeribitAuth } from './auth';
 import { getAuthenticationService } from './authentication-service';
 import { DeribitClient } from './deribit-client';
-import { MockDeribitClient } from './mock-deribit';
 import { OrderSupportDependencies } from './order-support-functions';
 import { placeOptionOrder as placeOptionOrderPure, PlaceOrderDependencies } from './place-option-order';
 import { executePositionAdjustmentByTvId, executePositionCloseByTvId } from './position-adjustment';
@@ -22,21 +20,18 @@ export class OptionTradingService {
   private deribitAuth: DeribitAuth;
   private configLoader: ConfigLoader;
   private deribitClient: DeribitClient;
-  private mockClient: MockDeribitClient;
   private deltaManager: DeltaManager;
 
   constructor(
     deribitAuth?: DeribitAuth,
     configLoader?: ConfigLoader,
     deribitClient?: DeribitClient,
-    mockClient?: MockDeribitClient,
     deltaManager?: DeltaManager
   ) {
     // 支持依赖注入，但保持向后兼容
     this.deribitAuth = deribitAuth || new DeribitAuth();
     this.configLoader = configLoader || ConfigLoader.getInstance();
     this.deribitClient = deribitClient || new DeribitClient();
-    this.mockClient = mockClient || new MockDeribitClient();
     this.deltaManager = deltaManager || DeltaManager.getInstance();
   }
 
@@ -56,7 +51,7 @@ export class OptionTradingService {
         throw new Error(authResult.error || 'Authentication failed');
       }
 
-      console.log(`✅ Authentication successful for account: ${payload.accountName} (Mock: ${authResult.isMock})`);
+      console.log(`✅ Authentication successful for account: ${payload.accountName}`);
 
       // 3. 解析交易信号
       // 解析tv_id并传递到交易参数中，最后触发交易存到Delta数据库
@@ -240,9 +235,8 @@ export class OptionTradingService {
 
         console.log(`🎯 Option selection: delta1=${delta1} → ${isCall ? 'call' : 'put'} option, action=${params.action} → ${actualDirection}`);
 
-        // 调用getInstrumentByDelta - 使用统一客户端
-        const client = getUnifiedClient();
-        const deltaResult = await client.getInstrumentByDelta(currency, payload.n, payload.delta1, isCall, underlying);
+        // 调用getInstrumentByDelta - 使用DeribitClient
+        const deltaResult = await this.deribitClient.getInstrumentByDelta(currency, payload.n, payload.delta1, isCall, underlying);
         
         if (deltaResult) {
           instrumentName = deltaResult.instrument.instrument_name;
@@ -250,7 +244,7 @@ export class OptionTradingService {
           
           // 执行开仓交易，使用实际交易方向
           const modifiedParams = { ...params, direction: actualDirection };
-          const orderResult = await this.placeOptionOrder(instrumentName!, modifiedParams, isMockMode());
+          const orderResult = await this.placeOptionOrder(instrumentName!, modifiedParams);
           if (!orderResult.success) {
             return orderResult;
           }
@@ -286,8 +280,7 @@ export class OptionTradingService {
               configLoader: this.configLoader,
               deltaManager: this.deltaManager,
               deribitAuth: this.deribitAuth,
-              deribitClient: this.deribitClient,
-              mockClient: this.mockClient
+              deribitClient: this.deribitClient
             }
           );
 
@@ -437,7 +430,7 @@ export class OptionTradingService {
       // 返回交易结果
       return {
         success: true,
-        orderId: `${isMockMode() ? 'mock' : 'real'}_order_${Date.now()}`,
+        orderId: `real_order_${Date.now()}`,
         message: `Successfully executed ${params.action} ${params.direction} order for ${params.quantity} contracts`,
         instrumentName,
         executedQuantity: params.quantity,
@@ -495,67 +488,9 @@ export class OptionTradingService {
     };
   }
 
-  /**
-   * 生成模拟的期权合约名称
-   */
-  private generateMockInstrumentName(symbol: string, action: OptionTradingAction, direction: 'buy' | 'sell'): string {
-    const { currency, underlying } = this.parseSymbolForOptions(symbol);
-    const expiry = this.getNextFridayExpiry();
-    const strike = this.estimateStrike(underlying);
 
-    // 根据详细的action类型确定期权类型
-    let optionType: string;
-    if (action === 'open_long' || action === 'reduce_short' || action === 'close_short') {
-      optionType = 'C'; // Call期权
-    } else if (action === 'open_short' || action === 'reduce_long' || action === 'close_long') {
-      optionType = 'P'; // Put期权
-    } else {
-      // 向后兼容：对于通用的open/close动作，使用原有逻辑
-      optionType = direction === 'buy' ? 'C' : 'P';
-    }
 
-    console.log(`🎯 Generated option type: ${optionType} for action: ${action}, direction: ${direction}`);
 
-    // 根据currency类型生成不同格式的instrument name
-    if (currency === 'USDC') {
-      // USDC期权使用下划线格式: SOL_USDC-expiry-strike-type
-      return `${underlying}_USDC-${expiry}-${strike}-${optionType}`;
-    } else {
-      // 传统期权使用连字符格式: BTC-expiry-strike-type
-      return `${underlying}-${expiry}-${strike}-${optionType}`;
-    }
-  }
-
-  /**
-   * 获取下一个周五到期日期 (DDMMMYY格式)
-   */
-  private getNextFridayExpiry(): string {
-    const now = new Date();
-    const daysUntilFriday = (5 - now.getDay()) % 7 || 7;
-    const nextFriday = new Date(now.getTime() + daysUntilFriday * 24 * 60 * 60 * 1000);
-    
-    const day = nextFriday.getDate().toString().padStart(2, '0');
-    const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 
-                   'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
-    const month = months[nextFriday.getMonth()];
-    const year = nextFriday.getFullYear().toString().slice(-2);
-    
-    return `${day}${month}${year}`;
-  }
-
-  /**
-   * 估算行权价格 (简化逻辑)
-   */
-  private estimateStrike(currency: string): number {
-    // 简化的行权价格估算
-    const strikes = {
-      'BTC': 50000,
-      'ETH': 3000,
-      'SOL': 150
-    };
-
-    return strikes[currency as keyof typeof strikes] || 1000;
-  }
 
   // getCorrectTickSize函数已迁移到 src/utils/price-correction.ts
 
@@ -568,7 +503,7 @@ export class OptionTradingService {
   /**
    * 下单执行期权交易 - 使用纯函数实现
    */
-  public async placeOptionOrder(instrumentName: string, params: OptionTradingParams, useMockMode: boolean): Promise<OptionTradingResult> {
+  public async placeOptionOrder(instrumentName: string, params: OptionTradingParams): Promise<OptionTradingResult> {
     // 构建订单支持依赖
     const orderSupportDependencies: OrderSupportDependencies = {
       deltaManager: this.deltaManager,
@@ -579,13 +514,12 @@ export class OptionTradingService {
     const dependencies: PlaceOrderDependencies = {
       deribitAuth: this.deribitAuth,
       deribitClient: this.deribitClient,
-      mockClient: this.mockClient,
       configLoader: this.configLoader,
       orderSupportDependencies: orderSupportDependencies
     };
 
     // 调用纯函数
-    return await placeOptionOrderPure(instrumentName, params, useMockMode, dependencies);
+    return await placeOptionOrderPure(instrumentName, params, dependencies);
   }
 
   /**

@@ -6,16 +6,14 @@
  */
 
 import { ConfigLoader } from '../config';
-import { DeribitAuth } from '../services/auth';
-import { DeribitClient } from '../services/deribit-client';
-import { MockDeribitClient } from '../services/mock-deribit';
 import { DeltaManager } from '../database/delta-manager';
+import { PositionPollingService } from '../polling/position-poller';
+import { DeribitAuth } from '../services/auth';
+import { AuthenticationService } from '../services/authentication-service';
+import { DeribitClient } from '../services/deribit-client';
 import { OptionService } from '../services/option-service';
 import { OptionTradingService } from '../services/option-trading';
 import { WeChatNotificationService } from '../services/wechat-notification';
-import { PositionPollingService } from '../polling/position-poller';
-import { ClientFactory } from '../factory/client-factory';
-import { AuthenticationService } from '../services/authentication-service';
 import { ResponseFormatter } from '../utils/response-formatter';
 
 import { DIContainer } from './di-container';
@@ -53,13 +51,6 @@ export function registerServices(container: DIContainer): void {
     { singleton: true }
   );
 
-  // 注册MockDeribitClient (单例)
-  container.register(
-    SERVICE_TOKENS.MockDeribitClient,
-    () => new MockDeribitClient(),
-    { singleton: true }
-  );
-
   // 注册DeltaManager (单例)
   container.register(
     SERVICE_TOKENS.DeltaManager,
@@ -73,8 +64,7 @@ export function registerServices(container: DIContainer): void {
     (container) => new OptionService(
       container.resolve(SERVICE_TOKENS.ConfigLoader),
       container.resolve(SERVICE_TOKENS.DeribitAuth),
-      container.resolve(SERVICE_TOKENS.DeribitClient),
-      container.resolve(SERVICE_TOKENS.MockDeribitClient)
+      container.resolve(SERVICE_TOKENS.DeribitClient)
     ),
     { singleton: true }
   );
@@ -86,7 +76,6 @@ export function registerServices(container: DIContainer): void {
       container.resolve(SERVICE_TOKENS.DeribitAuth),
       container.resolve(SERVICE_TOKENS.ConfigLoader),
       container.resolve(SERVICE_TOKENS.DeribitClient),
-      container.resolve(SERVICE_TOKENS.MockDeribitClient),
       container.resolve(SERVICE_TOKENS.DeltaManager)
     ),
     { singleton: true }
@@ -101,13 +90,6 @@ export function registerServices(container: DIContainer): void {
     { singleton: true }
   );
 
-  // 注册ClientFactory (单例)
-  container.register(
-    SERVICE_TOKENS.ClientFactory,
-    () => ClientFactory.getInstance(),
-    { singleton: true }
-  );
-
   // 注册PositionPollingService (单例，使用依赖注入)
   container.register(
     SERVICE_TOKENS.PositionPollingService,
@@ -115,7 +97,6 @@ export function registerServices(container: DIContainer): void {
       container.resolve(SERVICE_TOKENS.ConfigLoader),
       container.resolve(SERVICE_TOKENS.DeribitAuth),
       container.resolve(SERVICE_TOKENS.DeribitClient),
-      container.resolve(SERVICE_TOKENS.MockDeribitClient),
       container.resolve(SERVICE_TOKENS.DeltaManager)
     ),
     { singleton: true }

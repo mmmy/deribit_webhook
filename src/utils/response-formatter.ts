@@ -236,15 +236,7 @@ export class ResponseFormatter {
     return this.validationError(res, error, { meta: details });
   }
 
-  /**
-   * Mock模式响应 - 标识Mock模式的响应
-   */
-  public static mockResponse<T>(res: Response, data: T, message: string = 'Mock mode response'): Response {
-    return this.ok(res, data, {
-      message,
-      meta: { mockMode: true }
-    });
-  }
+
 }
 
 // ========== 便捷的导出函数 ==========

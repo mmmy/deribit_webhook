@@ -16,8 +16,6 @@ export const SERVICE_TOKENS = {
   
   // 客户端相关
   DeribitClient: Symbol('DeribitClient'),
-  MockDeribitClient: Symbol('MockDeribitClient'),
-  ClientFactory: Symbol('ClientFactory'),
   
   // 业务服务
   DeltaManager: Symbol('DeltaManager'),

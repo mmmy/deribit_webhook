@@ -23,7 +23,6 @@
     this.configLoader = ConfigLoader.getInstance();
     this.deribitAuth = new DeribitAuth();
     this.deribitClient = new DeribitClient();
-    this.mockClient = new MockDeribitClient();
     ```
   - **解决方案**: ✅ 引入依赖注入容器
   - **实施内容**:
@@ -62,33 +61,7 @@
   - **实际工时**: 完成
   - **提交**: `feat: 添加统一账户验证中间件，消除重复验证代码`
 
-- [x] **3. Mock模式判断逻辑重复** ⭐⭐⭐⭐ ✅ **已完成**
-  - **问题**: Mock模式选择逻辑在多个文件中重复
-  - **影响文件**: 
-    - `src/routes/trading.ts` (4次重复)
-    - `src/routes/auth.ts`
-    - `src/routes/delta.ts`
-    - `src/routes/health.ts`
-  - **重复代码**:
-    ```typescript
-    const useMockMode = process.env.USE_MOCK_MODE === 'true';
-    if (useMockMode) {
-      const mockClient = new MockDeribitClient();
-      // mock logic
-    } else {
-      const deribitClient = new DeribitClient();
-      // real logic
-    }
-    ```
-  - **解决方案**: ✅ 创建客户端工厂模式
-  - **实施内容**:
-    - 创建了 `ClientFactory` 单例工厂类
-    - 定义了 `IUnifiedClient` 统一接口
-    - 添加了 `RunMode` 枚举和便捷函数
-    - 集成到依赖注入系统
-    - 更新路由和服务文件使用统一客户端
-  - **实际工时**: 完成
-  - **提交**: 待提交
+
 
 ### 🟡 中优先级任务
 
@@ -166,7 +139,7 @@
 ### ✅ 已完成任务 (6/6):
 1. ✅ **服务实例化模式重复** - 依赖注入容器
 2. ✅ **账户验证逻辑重复** - 统一验证中间件  
-3. ✅ **Mock模式判断逻辑重复** - 客户端工厂模式
+3. ✅ **Mock模式判断逻辑重复** - 已移除Mock模式
 4. ✅ **认证流程重复** - 认证服务抽象
 5. ✅ **错误响应格式重复** - 统一响应格式化工具
 6. ✅ **配置加载器获取重复** - 依赖注入统一管理
@@ -182,7 +155,7 @@
 ### 🔄 推荐重构顺序 (已调整):
 1. ✅ **依赖注入容器** (任务1) - 从根本解决服务实例化重复
 2. ✅ **账户验证中间件** (任务2) - 统一业务逻辑验证  
-3. ✅ **客户端工厂模式** (任务3) - 简化Mock/Real模式选择
+3. ✅ **Mock模式移除** (任务3) - 移除所有Mock相关代码
 4. ✅ **认证服务抽象** (任务4) - 优化认证流程
 5. ✅ **统一响应格式** (任务5) - 标准化API响应
 6. ✅ **配置加载器统一** (任务6) - 依赖注入管理
@@ -230,7 +203,7 @@
 ### **新增核心组件**:
 1. **📦 依赖注入容器** (`src/core/di-container.ts`) - 统一服务管理
 2. **🛡️ 账户验证中间件** (`src/middleware/account-validation.ts`) - 统一验证逻辑
-3. **🏭 客户端工厂** (`src/factory/client-factory.ts`) - Mock/Real模式抽象
+3. **🏭 Mock模式移除** - 移除所有Mock相关代码和依赖
 4. **🔐 认证服务** (`src/services/authentication-service.ts`) - 统一认证流程
 5. **📋 响应格式化工具** (`src/utils/response-formatter.ts`) - 标准化API响应
 6. **⚙️ 服务注册表** (`src/core/service-registry.ts`) - 服务配置管理

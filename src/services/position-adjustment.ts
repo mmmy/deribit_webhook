@@ -11,7 +11,6 @@ import { correctOrderAmount, correctSmartPrice } from '../utils/price-correction
 import { calculateSpreadRatio, formatSpreadRatioAsPercentage } from '../utils/spread-calculation';
 import { DeribitAuth } from './auth';
 import { DeribitClient } from './deribit-client';
-import { MockDeribitClient } from './mock-deribit';
 import { OrderSupportDependencies } from './order-support-functions';
 import { placeOptionOrder, PlaceOrderDependencies } from './place-option-order';
 import { executeProgressiveLimitStrategy } from './progressive-limit-strategy';
@@ -34,12 +33,11 @@ export async function executePositionAdjustment(
     deribitClient: DeribitClient;
     deltaManager: DeltaManager;
     deribitAuth: DeribitAuth;
-    mockClient: MockDeribitClient;
     configLoader: ConfigLoader;
   }
 ): Promise<PositionAdjustmentResult> {
   const { requestId, accountName, currentPosition, deltaRecord, accessToken } = params;
-  const { deribitClient, deltaManager, deribitAuth, mockClient, configLoader } = services;
+  const { deribitClient, deltaManager, deribitAuth, configLoader } = services;
 
   try {
     console.log(`🔄 [${requestId}] Starting position adjustment for ${currentPosition.instrument_name}`);
@@ -175,7 +173,6 @@ export async function executePositionAdjustment(
     const dependencies: PlaceOrderDependencies = {
       deribitAuth: deribitAuth,
       deribitClient: deribitClient,
-      mockClient: mockClient,
       configLoader: configLoader,
       orderSupportDependencies: orderSupportDependencies
     };
@@ -184,7 +181,6 @@ export async function executePositionAdjustment(
     const newOrderResult = await placeOptionOrder(
       deltaResult.instrument.instrument_name,
       tradingParams,
-      false, // 不使用模拟模式
       dependencies
     );
 
@@ -587,10 +583,9 @@ export async function executePositionAdjustmentByTvId(
     deltaManager: DeltaManager;
     deribitAuth: DeribitAuth;
     deribitClient: DeribitClient;
-    mockClient: MockDeribitClient;
   }
 ) {
-  const { configLoader, deltaManager, deribitAuth, deribitClient, mockClient } = services;
+  const { configLoader, deltaManager, deribitAuth, deribitClient } = services;
 
   try {
     console.log(`🔍 Executing position adjustment for account: ${accountName}, tv_id: ${tvId}`);
@@ -684,7 +679,6 @@ export async function executePositionAdjustmentByTvId(
             deribitClient,
             deltaManager,
             deribitAuth,
-            mockClient: mockClient,
             configLoader: configLoader
           }
         );

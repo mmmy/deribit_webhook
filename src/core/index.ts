@@ -9,17 +9,14 @@ import { SERVICE_TOKENS } from './service-tokens';
 
 // 导入类型用于类型检查
 import type { ConfigLoader } from '../config';
-import type { DeribitAuth } from '../services/auth';
-import type { DeribitClient } from '../services/deribit-client';
-import type { MockDeribitClient } from '../services/mock-deribit';
 import type { DeltaManager } from '../database/delta-manager';
+import type { PositionPollingService } from '../polling/position-poller';
+import type { DeribitAuth } from '../services/auth';
+import type { AuthenticationService } from '../services/authentication-service';
+import type { DeribitClient } from '../services/deribit-client';
 import type { OptionService } from '../services/option-service';
 import type { OptionTradingService } from '../services/option-trading';
 import type { WeChatNotificationService } from '../services/wechat-notification';
-import type { PositionPollingService } from '../polling/position-poller';
-import type { ClientFactory } from '../factory/client-factory';
-import type { AuthenticationService } from '../services/authentication-service';
-import type { ResponseFormatter } from '../utils/response-formatter';
 
 // 标记容器是否已初始化
 let isInitialized = false;
@@ -67,13 +64,11 @@ export function resetContainer(): void {
 export const getConfigLoader = (): ConfigLoader => getService(SERVICE_TOKENS.ConfigLoader);
 export const getDeribitAuth = (): DeribitAuth => getService(SERVICE_TOKENS.DeribitAuth);
 export const getDeribitClient = (): DeribitClient => getService(SERVICE_TOKENS.DeribitClient);
-export const getMockDeribitClient = (): MockDeribitClient => getService(SERVICE_TOKENS.MockDeribitClient);
 export const getDeltaManager = (): DeltaManager => getService(SERVICE_TOKENS.DeltaManager);
 export const getOptionService = (): OptionService => getService(SERVICE_TOKENS.OptionService);
 export const getOptionTradingService = (): OptionTradingService => getService(SERVICE_TOKENS.OptionTradingService);
 export const getWeChatNotificationService = (): WeChatNotificationService => getService(SERVICE_TOKENS.WechatNotificationService);
 export const getPositionPollingService = (): PositionPollingService => getService(SERVICE_TOKENS.PositionPollingService);
-export const getClientFactory = (): ClientFactory => getService(SERVICE_TOKENS.ClientFactory);
 export const getAuthenticationService = (): AuthenticationService => getService(SERVICE_TOKENS.AuthenticationService);
 export const getResponseFormatter = () => getService(SERVICE_TOKENS.ResponseFormatter);
 

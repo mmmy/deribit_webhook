@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
 import { createApp } from './app';
-import { ConfigLoader } from './services';
 import { pollingManager } from './routes/positions';
+import { ConfigLoader } from './services';
 
 // Load environment variables
 dotenv.config();
@@ -24,7 +24,6 @@ export async function startServer(): Promise<void> {
       console.log(`🚀 Deribit Options Trading Microservice running on port ${port}`);
       console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
       console.log(`🔧 Test Environment: ${process.env.USE_TEST_ENVIRONMENT || 'true'}`);
-      console.log(`🎭 Mock Mode: ${process.env.USE_MOCK_MODE === 'true'}`);
       console.log(`📁 Config File: ${process.env.API_KEY_FILE || './config/apikeys.yml'}`);
       
       // Service endpoints

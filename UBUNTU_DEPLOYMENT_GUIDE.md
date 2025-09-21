@@ -102,7 +102,6 @@ NODE_ENV=production
 
 # Deribit API配置
 USE_TEST_ENVIRONMENT=false  # 生产环境设为false
-USE_MOCK_MODE=false         # 生产环境设为false
 
 # 日志配置
 LOG_LEVEL=info

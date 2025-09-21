@@ -1,7 +1,7 @@
 import { Router } from 'express';
-import { ConfigLoader } from '../services';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { ConfigLoader } from '../services';
 
 const router = Router();
 
@@ -37,13 +37,11 @@ router.get('/api/status', (req, res) => {
   try {
     const configLoader = ConfigLoader.getInstance();
     const accounts = configLoader.getEnabledAccounts();
-    const useMockMode = process.env.USE_MOCK_MODE === 'true';
 
     res.json({
       service: 'Deribit Options Trading Microservice',
       version: getPackageVersion(),
       environment: process.env.NODE_ENV || 'development',
-      mockMode: useMockMode,
       enabledAccounts: accounts.length,
       accounts: accounts.map(acc => ({ name: acc.name, enabled: true })),
       testEnvironment: process.env.USE_TEST_ENVIRONMENT || 'true',

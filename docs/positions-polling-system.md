@@ -22,7 +22,6 @@
 AUTO_START_POLLING=false
 
 # 其他相关环境变量
-USE_MOCK_MODE=false
 USE_TEST_ENVIRONMENT=true
 ```
 
@@ -272,7 +271,6 @@ graph TD
 ## 配置选项
 
 ### 环境变量
-- `USE_MOCK_MODE`: 是否使用Mock模式
 - `USE_TEST_ENVIRONMENT`: 是否使用测试环境
 - `API_KEY_FILE`: API密钥配置文件路径
 

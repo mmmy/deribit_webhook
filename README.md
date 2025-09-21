@@ -9,7 +9,6 @@
 - ✅ **测试/生产环境** - 自动切换测试和生产环境
 - ✅ **令牌管理** - 自动令牌刷新和过期处理
 - ✅ **期权交易API** - 完整的期权交易接口
-- ✅ **Mock模式** - 开发测试模式，无需网络连接
 - ✅ **错误处理** - 完善的错误处理和重试机制
 
 ## 🚀 快速开始
@@ -41,7 +40,6 @@ accounts:
 编辑 `.env` 文件：
 ```env
 PORT=3000
-USE_MOCK_MODE=true  # 开发模式使用mock
 USE_TEST_ENVIRONMENT=true
 ```
 
@@ -70,14 +68,6 @@ npm start
 
 详细的Webhook API文档请参考：`WEBHOOK_API.md`
 
-## 🔧 开发模式
-
-项目支持Mock模式，在网络受限环境下可以进行开发测试：
-
-1. 设置 `USE_MOCK_MODE=true` 在 `.env` 文件中
-2. Mock模式会模拟所有Deribit API响应
-3. 支持完整的认证流程测试
-
 ## 📁 项目结构
 
 ```
@@ -85,8 +75,7 @@ src/
 ├── config/          # 配置加载器
 ├── services/        # 业务服务
 │   ├── auth.ts      # 认证服务
-│   ├── deribit-client.ts  # Deribit客户端
-│   └── mock-deribit.ts    # Mock客户端
+│   └── deribit-client.ts  # Deribit客户端
 ├── types/           # TypeScript类型定义
 └── index.ts         # 主入口文件
 
@@ -114,8 +103,7 @@ config/
 5. **交易信号解析** ✅
 6. **占位符交易执行** ✅
 7. **错误处理和重试** ✅
-8. **Mock模式开发** ✅
-9. **配置文件管理** ✅
+8. **配置文件管理** ✅
 
 ## 🚧 待实现功能
 

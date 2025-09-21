@@ -1,11 +1,10 @@
 import { DeribitPrivateAPI, createAuthInfo, getConfigByEnvironment } from '../api';
 import { DeltaRecordType } from '../database/types';
 import {
-  ConfigLoader,
-  DeltaManager,
-  DeribitAuth,
-  DeribitClient,
-  MockDeribitClient
+    ConfigLoader,
+    DeltaManager,
+    DeribitAuth,
+    DeribitClient
 } from '../services';
 import { executePositionAdjustment } from '../services/position-adjustment';
 import { WeChatNotificationService } from '../services/wechat-notification';
@@ -27,26 +26,21 @@ export class PositionPollingService {
   private configLoader: ConfigLoader;
   private deribitAuth: DeribitAuth;
   private deribitClient: DeribitClient;
-  private mockClient: MockDeribitClient;
   private deltaManager: DeltaManager;
   private wechatNotification: WeChatNotificationService;
-  private useMockMode: boolean;
 
   constructor(
     configLoader?: ConfigLoader,
     deribitAuth?: DeribitAuth,
     deribitClient?: DeribitClient,
-    mockClient?: MockDeribitClient,
     deltaManager?: DeltaManager
   ) {
     // 支持依赖注入，但保持向后兼容
     this.configLoader = configLoader || ConfigLoader.getInstance();
     this.deribitAuth = deribitAuth || new DeribitAuth();
     this.deribitClient = deribitClient || new DeribitClient();
-    this.mockClient = mockClient || new MockDeribitClient();
     this.deltaManager = deltaManager || DeltaManager.getInstance();
     this.wechatNotification = new WeChatNotificationService(this.configLoader);
-    this.useMockMode = process.env.USE_MOCK_MODE === 'true';
   }
 
   /**
@@ -70,33 +64,18 @@ export class PositionPollingService {
         try {
           console.log(`📊 [${requestId}] Polling account: ${account.name}`);
 
-          if (this.useMockMode) {
-            // Mock mode: generate simulated data
-            const mockPositions = this.generateMockPositions();
-            
-            results.push({
-              accountName: account.name,
-              success: true,
-              mockMode: true,
-              data: mockPositions,
-              timestamp: new Date().toISOString()
-            });
+          // Real mode: call Deribit API
+          const positionsData = await this.fetchRealPositions(account.name, requestId);
 
-            console.log(`✅ [${requestId}] Mock data generated for ${account.name}: ${mockPositions.length} positions`);
-          } else {
-            // Real mode: call Deribit API
-            const positionsData = await this.fetchRealPositions(account.name, requestId);
-            
-            if (positionsData.success && positionsData.data) {
-              // Analyze positions for delta adjustments
-              await this.analyzePositionsForAdjustment(positionsData.data, account.name, requestId);
+          if (positionsData.success && positionsData.data) {
+            // Analyze positions for delta adjustments
+            await this.analyzePositionsForAdjustment(positionsData.data, account.name, requestId);
 
-              // Check for high ROI sell positions that need to be closed
-              this.checkHighROISellPositions(positionsData.data, account.name, requestId);
-            }
-
-            results.push(positionsData);
+            // Check for high ROI sell positions that need to be closed
+            this.checkHighROISellPositions(positionsData.data, account.name, requestId);
           }
+
+          results.push(positionsData);
 
         } catch (accountError) {
           console.error(`❌ [${requestId}] Failed to poll account ${account.name}:`, accountError);
@@ -146,35 +125,23 @@ export class PositionPollingService {
         try {
           console.log(`📋 [${requestId}] Polling pending orders for account: ${account.name}`);
 
-          if (this.useMockMode) {
-            // Mock mode: skip pending orders processing
-            results.push({
-              accountName: account.name,
-              success: true,
-              mockMode: true,
-              data: [],
-              timestamp: new Date().toISOString()
-            });
-            console.log(`✅ [${requestId}] Mock mode: skipped pending orders for ${account.name}`);
-          } else {
-            // Real mode: process pending orders
-            const orderResult = await this.processPendingOrdersForAccount(account.name, requestId);
-            results.push(orderResult);
+          // Real mode: process pending orders
+          const orderResult = await this.processPendingOrdersForAccount(account.name, requestId);
+          results.push(orderResult);
 
-            // 发送企业微信通知（无论成功还是失败）
-            try {
-              if (orderResult.data?.length) {
-                await this.wechatNotification.sendPendingOrdersNotification(
-                  account.name,
-                  orderResult.data || [],
-                  requestId,
-                  orderResult.success,
-                  orderResult.error
-                );
-              }
-            } catch (notificationError) {
-              console.error(`❌ [${requestId}] Failed to send WeChat notification for account ${account.name}:`, notificationError);
+          // 发送企业微信通知（无论成功还是失败）
+          try {
+            if (orderResult.data?.length) {
+              await this.wechatNotification.sendPendingOrdersNotification(
+                account.name,
+                orderResult.data || [],
+                requestId,
+                orderResult.success,
+                orderResult.error
+              );
             }
+          } catch (notificationError) {
+            console.error(`❌ [${requestId}] Failed to send WeChat notification for account ${account.name}:`, notificationError);
           }
 
         } catch (accountError) {
@@ -423,22 +390,6 @@ export class PositionPollingService {
   }
 
   /**
-   * Generate mock position data for testing
-   */
-  private generateMockPositions(): any[] {
-    const currencies = ['BTC', 'ETH', 'SOL'];
-    return currencies.map(currency => ({
-      instrument_name: `${currency}-8AUG25-${currency === 'BTC' ? '113000' : currency === 'ETH' ? '3500' : '200'}-C`,
-      size: Math.random() * 20 - 10, // -10 to 10
-      direction: Math.random() > 0.5 ? 'buy' : 'sell',
-      average_price: Math.random() * 0.05,
-      mark_price: Math.random() * 0.05,
-      unrealized_pnl: (Math.random() - 0.5) * 2,
-      delta: (Math.random() - 0.5) * 2
-    })).filter(pos => pos.size !== 0); // Only keep non-zero positions
-  }
-
-  /**
    * Fetch real position data from Deribit API
    */
   private async fetchRealPositions(accountName: string, requestId: string): Promise<PollingResult> {
@@ -540,7 +491,6 @@ export class PositionPollingService {
                     deribitClient: this.deribitClient,
                     deltaManager: this.deltaManager,
                     deribitAuth: this.deribitAuth,
-                    mockClient: this.mockClient,
                     configLoader: this.configLoader
                   }
                 );

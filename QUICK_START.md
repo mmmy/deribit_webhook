@@ -34,7 +34,6 @@ vim ~/deribit_webhook/.env
 
 # 重要配置
 NODE_ENV=production
-USE_MOCK_MODE=false
 USE_TEST_ENVIRONMENT=false
 ```
 

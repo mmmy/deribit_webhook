@@ -105,7 +105,7 @@ export class OptionTradingService {
       accountName: payload.accountName,
       direction,
       action,
-      symbol: payload.symbol,
+      symbol: payload.symbol.replace('.P', ''), // tv来的永续合约转换成现货
       quantity,
       price,
       orderType: price ? 'limit' : 'market',

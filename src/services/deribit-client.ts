@@ -222,7 +222,7 @@ export class DeribitClient {
       // 3.1 选择距离最小到期日最近的两个到期日(绝对值最小)
       const now = new Date();
       const minExpiryTime = new Date(
-        now.getTime() + (minExpiredDays - 1) * 24 * 60 * 60 * 1000
+        now.getTime() + minExpiredDays * 24 * 60 * 60 * 1000
       );
 
       // 按到期时间分组所有期权（不过滤最小到期时间）

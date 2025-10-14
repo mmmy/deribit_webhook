@@ -297,7 +297,7 @@ export class DeribitClient {
               details.greeks &&
               typeof details.greeks.delta === "number"
             ) {
-              const deltaDistance = Math.abs(details.greeks.delta - delta);
+              const deltaDistance = Math.abs(Math.abs(details.greeks.delta) - Math.abs(delta));
 
               // 使用统一的价差比率计算函数
               const spreadRatio = calculateSpreadRatio(details.best_bid_price, details.best_ask_price); // 如果没有价格数据，设置为最大价差

@@ -495,7 +495,8 @@ export async function executePositionClose(
       closeQuantity,
       params.isMarketOrder ? 'market' : 'limit', // 使用市价单快速平仓
       price,
-      accessToken
+      accessToken,
+      true
     );
 
     if (!params.isMarketOrder) {

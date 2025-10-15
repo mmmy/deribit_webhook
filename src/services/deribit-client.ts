@@ -394,7 +394,8 @@ export class DeribitClient {
     amount: number,
     orderType: 'market' | 'limit' = 'market',
     price?: number,
-    accessToken?: string
+    accessToken?: string,
+    reduceOnly: boolean = false
   ): Promise<DeribitOrderResponse> {
     try {
       if (!accessToken) {
@@ -413,6 +414,9 @@ export class DeribitClient {
         amount: amount,
         type: orderType,
       };
+      if (reduceOnly) {
+        orderParams.reduce_only = true;
+      }
 
       if (orderType === 'limit' && price) {
         orderParams.price = price;
@@ -439,7 +443,8 @@ export class DeribitClient {
     orderType: 'market' | 'limit' = 'market',
     price?: number,
     accessToken?: string,
-    label?: string
+    label?: string,
+    reduceOnly: boolean = false
   ): Promise<DeribitOrderResponse> {
     try {
       if (!accessToken) {
@@ -458,6 +463,9 @@ export class DeribitClient {
         amount: amount,
         type: orderType,
       };
+      if (reduceOnly) {
+        orderParams.reduce_only = true;
+      }
 
       if (orderType === 'limit' && price) {
         orderParams.price = price;

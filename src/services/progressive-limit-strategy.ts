@@ -3,6 +3,7 @@
  * 通过逐步移动价格来提高成交概率
  */
 
+import { DeribitOrder } from '../types';
 import type { DeribitInstrumentDetail } from '../types/deribit-instrument';
 import type { DetailedPositionInfo, ExecutionStats, OpenOrderInfo, PositionInfo } from '../types/position-info';
 import { correctOrderPrice } from '../utils/price-correction';
@@ -67,6 +68,8 @@ export async function executeProgressiveLimitStrategy(
         break;
       }
 
+      const filledAmount = orderStatus.filled_amount || 0;
+
       // 获取最新的盘口价格
       const optionDetails = await deribitClient.getOptionDetails(params.instrumentName);
       if (!optionDetails) {
@@ -96,8 +99,10 @@ export async function executeProgressiveLimitStrategy(
       const priceResult = correctOrderPrice(newPrice, params.instrumentDetail);
       const correctedNewPrice = priceResult.correctedPrice;
 
+      const remainingQuantity = Math.max(orderStatus.amount - filledAmount, 0);
+
       console.log(`📈 Step ${currentStep}/${maxStep}: Moving price from current to ${correctedNewPrice} (original: ${newPrice}, bid: ${bestBidPrice}, ask: ${bestAskPrice})`);
-      console.log(`🔧 Price correction: ${newPrice} → ${correctedNewPrice} (tick size: ${priceResult.tickSize})`);
+      console.log(`📦 Remaining quantity before edit: ${remainingQuantity} (filled: ${filledAmount}) | 🔧 Price correction: ${newPrice} → ${correctedNewPrice} (tick size: ${priceResult.tickSize})`);
 
       // 修改订单价格（只修改价格，不修改数量）
       await updateOrderPrice(params.orderId, correctedNewPrice, tokenInfo.accessToken, deribitClient, orderStatus.amount);
@@ -206,7 +211,7 @@ export async function executeProgressiveLimitStrategy(
 /**
  * 检查订单状态
  */
-async function checkOrderStatus(orderId: string, accessToken: string, deribitClient: DeribitClient): Promise<any> {
+async function checkOrderStatus(orderId: string, accessToken: string, deribitClient: DeribitClient): Promise<DeribitOrder | null> {
   try {
     // 通过订单ID获取订单状态
     const orderStatus = await deribitClient.getOrderState(accessToken, orderId);

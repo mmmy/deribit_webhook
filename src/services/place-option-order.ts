@@ -54,6 +54,17 @@ export async function placeOptionOrder(
   }
 }
 
+function isReduceOnlyAction(action: OptionTradingParams['action']): boolean {
+  return [
+    'close_long',
+    'close_short',
+    'reduce_long',
+    'reduce_short',
+    'stop_long',
+    'stop_short'
+  ].includes(action);
+}
+
 /**
  * 处理模拟订单
  */
@@ -100,6 +111,7 @@ async function handleRealOrder(
   dependencies: PlaceOrderDependencies
 ): Promise<OptionTradingResult> {
   console.log(`[REAL] Placing ${params.direction} order for ${params.quantity} contracts of ${instrumentName}`);
+  const reduceOnly = isReduceOnlyAction(params.action);
   
   // 1. 获取账户信息和认证
   const account = dependencies.configLoader.getAccountByName(params.accountName);
@@ -151,9 +163,9 @@ async function handleRealOrder(
   console.log(`价差检查: 比率=${formatSpreadRatioAsPercentage(spreadRatio)}, 步进倍数=${((optionDetails.best_ask_price - optionDetails.best_bid_price) / instrumentInfo.tick_size).toFixed(1)}, 合理=${isReasonable}`);
 
   if (!isReasonable) {
-    return await handleWideSpreadOrder(instrumentName, params, finalQuantity, finalPrice, spreadRatio, instrumentInfo, optionDetails, tokenInfo.accessToken, dependencies);
+    return await handleWideSpreadOrder(instrumentName, params, finalQuantity, finalPrice, spreadRatio, instrumentInfo, optionDetails, tokenInfo.accessToken, dependencies, reduceOnly);
   } else {
-    return await handleNarrowSpreadOrder(instrumentName, params, finalQuantity, finalPrice, spreadRatio, instrumentInfo, optionDetails, tokenInfo.accessToken, dependencies);
+    return await handleNarrowSpreadOrder(instrumentName, params, finalQuantity, finalPrice, spreadRatio, instrumentInfo, optionDetails, tokenInfo.accessToken, dependencies, reduceOnly);
   }
 }
 
@@ -220,7 +232,8 @@ async function handleWideSpreadOrder(
   instrumentInfo: any,
   optionDetails: any,
   accessToken: string,
-  dependencies: PlaceOrderDependencies
+  dependencies: PlaceOrderDependencies,
+  reduceOnly: boolean
 ): Promise<OptionTradingResult> {
   const orderResult = await dependencies.deribitClient.placeOrder(
     instrumentName,
@@ -228,7 +241,8 @@ async function handleWideSpreadOrder(
     finalQuantity,
     'limit',
     finalPrice,
-    accessToken
+    accessToken,
+    reduceOnly
   );
   console.log(`✅ Order placed successfully:`, orderResult);
 
@@ -284,7 +298,8 @@ async function handleNarrowSpreadOrder(
   instrumentInfo: any,
   optionDetails: any,
   accessToken: string,
-  dependencies: PlaceOrderDependencies
+  dependencies: PlaceOrderDependencies,
+  reduceOnly: boolean
 ): Promise<OptionTradingResult> {
   console.log(`📈 Spread is small, using progressive limit order strategy`);
 
@@ -300,7 +315,8 @@ async function handleNarrowSpreadOrder(
     finalQuantity,
     'limit',
     price,
-    accessToken
+    accessToken,
+    reduceOnly
   );
 
   console.log(`📋 Initial order placed with order_id ${orderResult.order.order_id}:`, orderResult);

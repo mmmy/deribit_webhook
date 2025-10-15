@@ -40,7 +40,7 @@ export interface IUnifiedClient {
   getPositions(accessToken: string, params: any): Promise<any[]>;
   
   // 交易相关
-  placeOrder(instrumentName: string, direction: 'buy' | 'sell', amount: number, type: 'limit' | 'market', price?: number, accessToken?: string): Promise<any>;
+  placeOrder(instrumentName: string, direction: 'buy' | 'sell', amount: number, type: 'limit' | 'market', price?: number, accessToken?: string, reduceOnly?: boolean): Promise<any>;
   
   // 期权详情
   getOptionDetails(instrumentName: string): Promise<any>;
@@ -223,13 +223,14 @@ class UnifiedMockClient implements IUnifiedClient {
     return []; // 返回空数组作为模拟数据
   }
 
-  async placeOrder(instrumentName: string, direction: 'buy' | 'sell', amount: number, type: 'limit' | 'market', price?: number, accessToken?: string): Promise<any> {
+  async placeOrder(instrumentName: string, direction: 'buy' | 'sell', amount: number, type: 'limit' | 'market', price?: number, accessToken?: string, reduceOnly?: boolean): Promise<any> {
     return this.mockClient.placeOrder({
       instrument_name: instrumentName,
       direction,
       amount,
       type,
-      price
+      price,
+      reduce_only: reduceOnly
     });
   }
 
@@ -269,11 +270,11 @@ class UnifiedRealClient implements IUnifiedClient {
     return this.realClient.getPositions(accessToken, params);
   }
 
-  async placeOrder(instrumentName: string, direction: 'buy' | 'sell', amount: number, type: 'limit' | 'market', price?: number, accessToken?: string): Promise<any> {
+  async placeOrder(instrumentName: string, direction: 'buy' | 'sell', amount: number, type: 'limit' | 'market', price?: number, accessToken?: string, reduceOnly?: boolean): Promise<any> {
     if (!accessToken) {
       throw new Error('Access token is required for real client');
     }
-    return this.realClient.placeOrder(instrumentName, direction, amount, type, price, accessToken);
+    return this.realClient.placeOrder(instrumentName, direction, amount, type, price, accessToken, reduceOnly);
   }
 
   async getOptionDetails(instrumentName: string): Promise<any> {

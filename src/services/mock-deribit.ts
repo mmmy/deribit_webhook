@@ -239,6 +239,7 @@ export class MockDeribitClient {
     type: 'limit' | 'market';
     direction: 'buy' | 'sell';
     price?: number;
+    reduce_only?: boolean;
   }): Promise<any> {
     console.log('[MOCK] Placing order:', params);
 
@@ -255,7 +256,8 @@ export class MockDeribitClient {
         order_state: 'open',
         creation_timestamp: Date.now(),
         average_price: 0,
-        filled_amount: 0
+        filled_amount: 0,
+        reduce_only: params.reduce_only ?? false
       },
       trades: []
     };

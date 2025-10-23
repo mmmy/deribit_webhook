@@ -22,6 +22,12 @@ router.post('/webhook/signal', validateAccountFromBody('accountName'), async (re
 
     const payload = req.body as WebhookSignalPayload;
 
+    // Skip processing when comment explicitly asks to ignore
+    if (typeof payload.comment === 'string' && payload.comment.includes('忽略')) {
+      console.log(`?? [${requestId}] Ignoring signal due to comment keyword.`);
+      return ApiResponse.ok(res, null, { message: 'Signal ignored', meta: { requestId, ignored: true } });
+    }
+
     // 2. Validate required fields
     const requiredFields = ['accountName', 'side', 'symbol', 'size', 'qtyType'];
     const missingFields = requiredFields.filter(field => !payload[field as keyof WebhookSignalPayload]);

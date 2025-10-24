@@ -12,6 +12,21 @@ import {
   UpdateDeltaRecordInput
 } from './types';
 
+const MONTH_INDEX: Record<string, number> = {
+  JAN: 0,
+  FEB: 1,
+  MAR: 2,
+  APR: 3,
+  MAY: 4,
+  JUN: 5,
+  JUL: 6,
+  AUG: 7,
+  SEP: 8,
+  OCT: 9,
+  NOV: 10,
+  DEC: 11
+};
+
 /**
  * Delta记录数据库管理器
  * 使用better-sqlite3管理Deribit账户的期权仓位和未成交订单的Delta值
@@ -480,6 +495,72 @@ export class DeltaManager {
 
     console.log(`🧹 清理过期订单记录: ${result.changes}条 (${daysOld}天前)`);
     return result.changes;
+  }
+
+  /**
+   * 清理到期超过宽限期的期权记录
+   */
+  public cleanupExpiredOptionRecords(gracePeriodDays: number = 7): number {
+    const selectSQL = 'SELECT id, instrument_name FROM delta_records';
+    const records = this.db.prepare(selectSQL).all() as Array<{ id: number; instrument_name: string }>;
+    const now = new Date();
+    const gracePeriodMs = gracePeriodDays * 24 * 60 * 60 * 1000;
+
+    const expiredIds: number[] = [];
+    for (const record of records) {
+      const expiryDate = DeltaManager.parseInstrumentExpiry(record.instrument_name);
+      if (!expiryDate) {
+        continue;
+      }
+
+      if (expiryDate.getTime() + gracePeriodMs < now.getTime()) {
+        expiredIds.push(record.id);
+      }
+    }
+
+    if (expiredIds.length === 0) {
+      console.log('🧹 Delta期权清理: 未发现到期超过宽限期的记录');
+      return 0;
+    }
+
+    const placeholders = expiredIds.map(() => '?').join(',');
+    const deleteSQL = `DELETE FROM delta_records WHERE id IN (${placeholders})`;
+    const result = this.db.prepare(deleteSQL).run(...expiredIds);
+
+    console.log(`🧹 Delta期权清理: 删除 ${result.changes} 条记录 (宽限期 ${gracePeriodDays} 天)`);
+    return result.changes;
+  }
+
+  private static parseInstrumentExpiry(instrumentName: string): Date | null {
+    if (!instrumentName) {
+      return null;
+    }
+
+    const parts = instrumentName.toUpperCase().split('-');
+    if (parts.length < 2) {
+      return null;
+    }
+
+    const expiryToken = parts[1];
+    const match = expiryToken.match(/^(\d{1,2})([A-Z]{3})(\d{2})$/);
+    if (!match) {
+      return null;
+    }
+
+    const day = parseInt(match[1], 10);
+    const month = MONTH_INDEX[match[2]];
+    const year = 2000 + parseInt(match[3], 10);
+
+    if (!Number.isFinite(day) || day < 1 || day > 31) {
+      return null;
+    }
+
+    if (month === undefined) {
+      return null;
+    }
+
+    const expiryDate = new Date(Date.UTC(year, month, day, 8, 0, 0, 0));
+    return Number.isNaN(expiryDate.getTime()) ? null : expiryDate;
   }
 
   /**

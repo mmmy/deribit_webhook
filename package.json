@@ -10,10 +10,12 @@
     "debug": "nodemon --exec \"node --inspect=9229 -r ts-node/register src/index.ts\"",
     "clean": "rm -rf dist",
     "test": "jest",
-    "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage",
-    "test:verbose": "jest --verbose",
-    "test:ci": "jest --ci --coverage --watchAll=false"
+    "test:watch": "jest --watch --no-detect-leaks",
+    "test:coverage": "jest --coverage --no-detect-leaks",
+    "test:verbose": "jest --verbose --no-detect-leaks",
+    "test:ci": "jest --ci --coverage --watchAll=false",
+    "test:unit": "jest --no-detect-leaks --no-detect-open-handles",
+    "test:unit:coverage": "jest --coverage --no-detect-leaks --no-detect-open-handles"
   },
   "keywords": [],
   "author": "",

@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 import { createApp } from './app';
 import { ConfigLoader } from './services';
 import { pollingManager } from './routes/positions';
+import { startDeltaCleanupJob, stopDeltaCleanupJob } from './jobs/delta-cleanup';
 
 // Load environment variables
 dotenv.config();
@@ -57,6 +58,9 @@ export async function startServer(): Promise<void> {
       } else {
         console.log('⏸️ Polling not started automatically. Use POST /api/positions/start-polling to start manually.');
       }
+
+      // Start daily Delta cleanup job
+      startDeltaCleanupJob();
     });
 
     // Handle server errors
@@ -111,6 +115,7 @@ function shutdown(): void {
     // Stop position polling
     console.log('⏹️ Stopping position polling...');
     pollingManager.stopPolling();
+    stopDeltaCleanupJob();
 
     console.log('✅ Server shutdown completed');
     process.exit(0);

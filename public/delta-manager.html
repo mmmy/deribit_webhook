@@ -675,7 +675,7 @@
                                     <th>合约名称</th>
                                     <th>数量</th>
                                     <th>目标Delta(2)</th>
-                                    <th>移仓Delta</th>
+                                    <th>移仓Delta(1)</th>
                                     <th>最小到期天数</th>
                                     <th>Delta平均值</th>
                                     <th>ROI</th>
@@ -703,7 +703,7 @@
                                     <th>合约名称</th>
                                     <th>交易动作</th>
                                     <th>目标Delta(2)</th>
-                                    <th>移仓Delta</th>
+                                    <th>移仓Delta(1)</th>
                                     <th>最小到期天数</th>
                                     <th>TV_ID</th>
                                     <th>创建时间</th>
@@ -825,9 +825,9 @@
                     <small style="color: #666; font-size: 12px;">仓位和订单都需要设置目标Delta(2)值</small>
                 </div>
                 <div class="form-group" id="quickMovePositionDeltaGroup">
-                    <label for="quickMovePositionDeltaValue">移仓Delta值 <span style="color: red;">*</span>:</label>
-                    <input type="number" id="quickMovePositionDeltaValue" step="0.0001" min="-1" max="1" placeholder="请输入移仓Delta值 (-1到1之间)" required>
-                    <small style="color: #666; font-size: 12px;">仓位和订单都需要设置移仓Delta值</small>
+                    <label for="quickMovePositionDeltaValue">移仓Delta(1)值 <span style="color: red;">*</span>:</label>
+                    <input type="number" id="quickMovePositionDeltaValue" step="0.0001" min="-1" max="1" placeholder="请输入移仓Delta(1)值 (-1到1之间)" required>
+                    <small style="color: #666; font-size: 12px;">仓位和订单都需要设置移仓Delta(1)值</small>
                 </div>
                 <div class="form-group">
                     <label for="quickMinExpireDays">最小到期天数 (可留空):</label>
@@ -865,7 +865,7 @@
                     <input type="number" id="editTargetDeltaValue" step="0.0001" min="-1" max="1" required>
                 </div>
                 <div class="form-group" id="editMovePositionDeltaGroup">
-                    <label for="editMovePositionDeltaValue">移仓Delta值:</label>
+                    <label for="editMovePositionDeltaValue">移仓Delta(1)值:</label>
                     <input type="number" id="editMovePositionDeltaValue" step="0.0001" min="-1" max="1" required>
                 </div>
                 <div class="form-group">

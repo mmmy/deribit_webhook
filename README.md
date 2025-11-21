@@ -10,6 +10,9 @@
 - ✅ **令牌管理** - 自动令牌刷新和过期处理
 - ✅ **期权交易 API** - 完整的期权交易接口
 - ✅ **Mock 模式** - 开发测试模式，无需网络连接
+- ✅ **Delta 管理** - 期权 Delta 风险管理和仓位调整
+- ✅ **企业微信通知** - 交易结果和状态通知
+- ✅ **后台轮询** - 自动监控仓位和调整策略
 - ✅ **错误处理** - 完善的错误处理和重试机制
 
 ## 🚀 快速开始
@@ -69,6 +72,19 @@ npm start
 - **`POST /webhook/signal`** - TradingView webhook 信号接收 (主要功能)
 - **`GET /api/trading/status`** - 交易服务状态
 
+### Delta 管理接口
+
+- **`GET /api/delta/:account`** - 获取账户 Delta 记录
+- **`POST /api/delta/:account`** - 创建 Delta 记录
+- **`PUT /api/delta/:account/:id`** - 更新 Delta 记录
+- **`DELETE /api/delta/:account/:id`** - 删除 Delta 记录
+- **`GET /api/delta/:account/live-data`** - 获取实时仓位和订单数据
+
+### 仓位管理接口
+
+- **`GET /api/positions/:account/:currency`** - 获取指定货币仓位
+- **`POST /api/positions/:account/adjust`** - 调整仓位
+
 ### 系统接口
 
 - **`GET /health`** - 健康检查
@@ -87,34 +103,105 @@ npm start
 2. Mock 模式会模拟所有 Deribit API 响应
 3. 支持完整的认证流程测试
 
+## 🎯 Delta 管理系统
+
+Delta 管理系统是本项目的核心功能，用于期权交易的风险管理：
+
+### Delta 概念
+- **目标Delta(2)**：期望达到的 Delta 值，用于策略规划
+- **移仓Delta(1)**：在仓位调整过程中要达成的 Delta 值
+- **Delta 值范围**：-1 到 1，正值为看涨，负值为看跌
+
+### 管理功能
+- **数据库记录**：持久化存储 Delta 配置
+- **实时监控**：通过前端页面监控实际 Delta 敞口
+- **自动调整**：后台轮询服务自动调整仓位
+- **Webhook 集成**：与 TradingView 策略信号集成
+
+### 前端页面
+- **`/`** - 主控制台：系统概览和状态监控
+- **`/delta-manager.html`** - Delta 管理器：Delta 记录管理和调整
+- **`/logs.html`** - 日志查看器：系统日志和历史记录
+
 ## 📁 项目结构
 
 ```
 src/
-├── config/          # 配置加载器
-├── services/        # 业务服务
-│   ├── auth.ts      # 认证服务
-│   ├── deribit-client.ts  # Deribit客户端
-│   └── mock-deribit.ts    # Mock客户端
-├── types/           # TypeScript类型定义
-└── index.ts         # 主入口文件
+├── config/              # 配置加载器和环境变量管理
+├── core/                # 核心依赖注入容器
+│   ├── di-container.ts    # 依赖注入容器实现
+│   ├── service-registry.ts # 服务注册配置
+│   └── service-tokens.ts   # 服务令牌定义
+├── services/            # 业务服务层
+│   ├── auth.ts            # Deribit OAuth 2.0 认证
+│   ├── deribit-client.ts  # Deribit API 客户端
+│   ├── mock-deribit.ts    # Mock 客户端（开发用）
+│   ├── option-service.ts  # 期权交易服务
+│   ├── option-trading.ts  # 期权交易逻辑
+│   └── wechat-notification.ts # 企业微信通知
+├── routes/              # Express 路由处理器
+│   ├── webhook.ts         # TradingView webhook 接口
+│   ├── delta.ts           # Delta 管理 API
+│   ├── trading.ts         # 交易 API
+│   ├── positions.ts       # 仓位管理 API
+│   ├── auth.ts            # 认证 API
+│   └── health.ts          # 健康检查 API
+├── middleware/           # Express 中间件
+│   ├── error-handler.ts   # 全局错误处理
+│   └── account-validation.ts # 账户验证
+├── database/            # SQLite 数据库管理
+│   ├── delta-manager.ts    # Delta 记录数据库管理
+│   └── types.ts           # 数据库类型定义
+├── polling/             # 后台轮询服务
+│   ├── position-poller.ts  # 仓位监控轮询
+│   └── polling-manager.ts # 轮询管理器
+├── jobs/                # 定时任务
+│   └── delta-cleanup.ts    # Delta 记录清理任务
+├── utils/               # 工具函数
+│   ├── response-formatter.ts # API 响应格式化
+│   ├── spread-calculation.ts # 价差计算
+│   └── price-correction.ts  # 价格修正
+├── types/               # TypeScript 类型定义
+│   ├── deribit-instrument.ts # Deribit 工具类型
+│   ├── position-info.ts     # 仓位信息类型
+│   └── index.ts            # 通用类型
+├── api/                 # API 客户端实现
+│   ├── deribit-private.ts  # Deribit 私有 API
+│   ├── deribit-public.ts   # Deribit 公开 API
+│   └── index.ts
+├── factory/             # 工厂模式实现
+│   └── client-factory.ts   # 客户端工厂
+├── app.ts               # Express 应用配置
+└── index.ts             # 主入口文件
 
-config/
-├── apikeys.yml      # API密钥配置
-└── apikeys.example.yml  # 配置模板
+public/                  # 前端页面
+├── index.html           # 主控制台页面
+├── delta-manager.html   # Delta 管理器页面
+└── logs.html            # 日志查看器页面
+
+config/                  # 配置文件
+├── apikeys.yml          # API 密钥配置（需自行创建）
+└── apikeys.example.yml  # API 密钥配置模板
+
+data/                    # SQLite 数据库文件
+└── delta_records.db     # Delta 记录数据库
 ```
 
 ## 🔐 安全说明
 
 - API 密钥文件 `config/apikeys.yml` 已加入 `.gitignore`
-- 生产环境请设置 `testMode: false`
+- 生产环境请设置 `USE_TEST_ENVIRONMENT=false`
+- 生产环境请设置 `USE_MOCK_MODE=false`
 - 建议使用环境变量管理敏感信息
+- 企业微信 Webhook URL 请妥善保管
+- 数据库文件 `data/` 目录已加入 `.gitignore`
 
 ## 📚 详细文档
 
 - **Webhook API 文档**: `WEBHOOK_API.md` - 包含 Deribit API 参考和 Webhook 集成指南
 - **快速开始**: `QUICK_START.md` - 快速部署指南
 - **开发者指南**: `AGENTS.md` - AI 开发人员指南和架构文档
+- **接口需求**: `接口需求.md` - 项目接口需求说明
 
 ## 🎯 已实现的核心功能
 
@@ -123,20 +210,29 @@ config/
 3. **多账户支持** ✅
 4. **Webhook 信号接收** ✅
 5. **交易信号解析** ✅
-6. **占位符交易执行** ✅
-7. **错误处理和重试** ✅
-8. **Mock 模式开发** ✅
-9. **配置文件管理** ✅
+6. **期权合约自动选择** ✅
+7. **真实交易执行** ✅
+8. **Delta 风险管理系统** ✅
+9. **企业微信通知系统** ✅
+10. **后台仓位轮询服务** ✅
+11. **SQLite Delta 数据库** ✅
+12. **前端管理界面** ✅
+13. **WebSocket 实时数据订阅** ✅ (部分实现)
+14. **完整的订单管理系统** ✅
+15. **风险管理和仓位控制** ✅
+16. **日志系统和监控** ✅
+17. **Mock 模式开发** ✅
+18. **配置文件管理** ✅
 
 ## 🚧 待实现功能
 
-- [ ] 真实期权交易策略实现
-- [ ] 期权合约自动选择算法
-- [ ] WebSocket 实时数据订阅
-- [ ] 完整的订单管理系统
-- [ ] 风险管理和仓位控制
-- [ ] 日志系统和监控
-- [ ] 单元测试覆盖
+- [ ] 完整的 WebSocket 实时数据订阅
+- [ ] 高级期权交易策略实现
+- [ ] 更完善的风险控制算法
+- [ ] 性能优化和缓存机制
+- [ ] 更多交易所支持
+- [ ] 图表和分析功能
+- [ ] 单元测试覆盖提升
 
 ## 📄 License
 

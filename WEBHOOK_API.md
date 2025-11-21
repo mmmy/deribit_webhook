@@ -172,6 +172,42 @@ curl -X POST http://localhost:3000/webhook/signal \
 | 404         | 账户不存在 | 指定的账户名未找到     |
 | 500         | 服务器错误 | 认证失败或交易执行错误 |
 
+### Delta 字段说明
+
+Delta 管理系统中包含两种关键 Delta 值：
+
+#### 目标Delta(2)
+- **定义**: 期望达到的 Delta 值，用于策略规划
+- **范围**: -1 到 1
+- **用途**: 
+  - 设置期权投资组合的风险敞口目标
+  - 指导仓位调整的方向和幅度
+  - 与 TradingView 策略信号集成
+
+#### 移仓Delta(1)
+- **定义**: 在仓位调整过程中要达成的 Delta 值
+- **范围**: -1 到 1
+- **用途**:
+  - 逐步调整仓位到目标 Delta
+  - 控制每次调整的幅度
+  - 管理调整过程中的风险暴露
+
+#### Delta 值解释
+- **正值 (0 到 1)**: 看涨敞口，价格上涨时盈利
+- **负值 (-1 到 0)**: 看跌敞口，价格下跌时盈利
+- **接近 0**: 中性策略，对价格变化不敏感
+- **接近 1 或 -1**: 高杠杆方向性头寸
+
+#### 应用示例
+```json
+{
+  "target_delta": 0.5,      // 目标Delta(2): 中等看涨敞口
+  "move_position_delta": 0.3, // 移仓Delta(1): 每次调整0.3
+  "instrument_name": "BTC-25JUL25-50000-C", // BTC看涨期权
+  "record_type": "position"  // 仓位记录类型
+}
+```
+
 ## 开发模式
 
 设置环境变量 `USE_MOCK_MODE=true` 启用模拟模式：
@@ -333,6 +369,194 @@ curl -X POST http://localhost:3000/webhook/signal \
 5. **安全性**: 妥善保管 API 密钥，使用适当的权限范围
 
 ## 相关接口
+
+### Delta 管理接口
+
+Delta 管理系统用于期权交易的风险管理和仓位调整。
+
+#### 获取 Delta 记录
+
+```
+GET /api/delta/:account
+```
+
+**响应示例**:
+```json
+{
+  "success": true,
+  "data": {
+    "records": [
+      {
+        "id": 1,
+        "account_name": "account_1",
+        "instrument_name": "BTC-25JUL25-50000-C",
+        "record_type": "position",
+        "target_delta": 0.5,
+        "move_position_delta": 0.3,
+        "min_expire_days": 7,
+        "tv_id": 12345,
+        "created_at": "2025-06-20T10:00:00Z",
+        "updated_at": "2025-06-20T10:00:00Z"
+      }
+    ],
+    "summary": {
+      "record_count": 5,
+      "position_count": 3,
+      "order_count": 2,
+      "total_delta": 1.25
+    }
+  },
+  "timestamp": "2025-06-20T12:00:00Z"
+}
+```
+
+#### 创建 Delta 记录
+
+```
+POST /api/delta/:account
+```
+
+**请求体**:
+```json
+{
+  "instrument_name": "BTC-25JUL25-50000-C",
+  "target_delta": 0.5,
+  "move_position_delta": 0.3,
+  "min_expire_days": 7,
+  "tv_id": 12345,
+  "record_type": "position"
+}
+```
+
+**响应示例**:
+```json
+{
+  "success": true,
+  "message": "Delta record created successfully",
+  "data": {
+    "id": 6,
+    "account_name": "account_1",
+    "instrument_name": "BTC-25JUL25-50000-C",
+    "record_type": "position",
+    "target_delta": 0.5,
+    "move_position_delta": 0.3,
+    "min_expire_days": 7,
+    "tv_id": 12345,
+    "created_at": "2025-06-20T12:00:00Z",
+    "updated_at": "2025-06-20T12:00:00Z"
+  },
+  "timestamp": "2025-06-20T12:00:00Z"
+}
+```
+
+#### 更新 Delta 记录
+
+```
+PUT /api/delta/:account/:id
+```
+
+**请求体**:
+```json
+{
+  "target_delta": 0.6,
+  "move_position_delta": 0.4,
+  "min_expire_days": 10
+}
+```
+
+#### 删除 Delta 记录
+
+```
+DELETE /api/delta/:account/:id
+```
+
+#### 获取实时数据
+
+```
+GET /api/delta/:account/live-data
+```
+
+**响应示例**:
+```json
+{
+  "success": true,
+  "data": {
+    "positions": [
+      {
+        "instrument_name": "BTC-25JUL25-50000-C",
+        "size": 2,
+        "direction": "buy",
+        "average_price": 0.1250,
+        "mark_price": 0.1300,
+        "delta": 1.2,
+        "roi": 4.0
+      }
+    ],
+    "openOrders": [
+      {
+        "order_id": "1234567890",
+        "instrument_name": "BTC-25JUL25-49000-P",
+        "direction": "sell",
+        "amount": 1,
+        "price": 0.0500,
+        "order_type": "limit"
+      }
+    ]
+  },
+  "mockMode": false,
+  "timestamp": "2025-06-20T12:00:00Z"
+}
+```
+
+### 仓位管理接口
+
+#### 获取仓位信息
+
+```
+GET /api/positions/:account/:currency
+```
+
+**响应示例**:
+```json
+{
+  "success": true,
+  "data": {
+    "currency": "BTC",
+    "positions": [
+      {
+        "instrument_name": "BTC-25JUL25-50000-C",
+        "size": 2,
+        "direction": "buy",
+        "average_price": 0.1250,
+        "mark_price": 0.1300,
+        "delta": 1.2,
+        "vega": 0.05,
+        "theta": -0.02,
+        "realized_pnl": 0.0150,
+        "unrealized_pnl": 0.0100,
+        "funding": 0.0010
+      }
+    ],
+    "total_delta": 1.2,
+    "total_value": 0.2600
+  },
+  "timestamp": "2025-06-20T12:00:00Z"
+}
+```
+
+#### 调整仓位
+
+```
+POST /api/positions/:account/adjust
+```
+
+**请求体**:
+```json
+{
+  "target_delta": 0.8,
+  "adjustment_type": "hedge"
+}
+```
 
 ### 交易服务状态
 

@@ -356,8 +356,9 @@ export class DeribitClient {
         optionsWithDelta.sort(
           (a, b) => Math.abs(a.deltaDistance) - Math.abs(b.deltaDistance),
         );
-        // todo: 增加过滤, 先过滤出deltaDistance < delta * 1.1
-        const top2ForExpiry = optionsWithDelta.slice(0, M);
+        const top2ForExpiry = optionsWithDelta
+          .filter((op) => op.deltaDistance < Math.abs(delta) * 0.1)
+          .slice(0, M);
 
         console.log(
           `🎯 Selected ${top2ForExpiry.length} options for expiry ${new Date(

@@ -756,7 +756,7 @@ ${result.error ? `📋 **错误详情**: ${result.error}` : ''}
 🎯 **合约**: ${position.instrument_name}
 📈 **ROI**: ${(roi * 100).toFixed(2)}%
 🔄 **平仓状态**: ${statusText}
-${closeResult.message ? `📝 **详情**: ${closeResult.message}` : ''}
+${closeResult.error ? `📝 **详情**: ${closeResult.error}` : ''}
 🔄 **请求ID**: ${requestId}
 
 > 高ROI平仓操作已完成`;
